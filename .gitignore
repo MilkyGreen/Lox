@@ -1,0 +1,4 @@
+# Created by .ignore support plugin (hsz.mobi)
+/.idea/
+/craftinginterpreters-lox.iml
+/jlox/target/
