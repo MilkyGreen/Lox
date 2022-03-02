@@ -140,7 +140,9 @@ public class Scanner {
                 break;
 
                 // 处理string
-            case '"': string(); break;
+            case '"':
+                string();
+                break;
 
             default:
                 if (isDigit(c)) {
