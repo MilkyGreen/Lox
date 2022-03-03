@@ -3,7 +3,7 @@ package com.milkygreen.jlox;
 import java.util.List;
 
 /**
- * 虚拟语法树
+ * 抽象语法树
  */
 abstract class Expr {
     /**

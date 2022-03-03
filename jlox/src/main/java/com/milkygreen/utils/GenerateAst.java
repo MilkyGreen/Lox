@@ -6,7 +6,7 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * AST(虚拟语法树) 类自动生成辅助工具
+ * AST(抽象语法树) 类自动生成辅助工具
  */
 public class GenerateAst {
 
