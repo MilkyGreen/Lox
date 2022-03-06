@@ -1,12 +1,1 @@
-class Test{
-
-    var a = 1;
-    var b = "2";
-
-    // a 和 b 相加，返回和
-    fun add(a , b){
-        return a + b;
-    }
-
-
-}
+1 + 1 >= 2*2 == true
