@@ -11,8 +11,12 @@ import java.util.List;
 /**
  */
 public class Lox {
+    private static final Interpreter interpreter = new Interpreter();
 
+    // 是否有编译错误
     static boolean hadError = false;
+    // 是否有运行时错误
+    static boolean hadRuntimeError = false;
 
     public static void main(String[] args) throws Exception {
         if (args.length > 1) {
@@ -38,6 +42,9 @@ public class Lox {
         if (hadError) {
             System.exit(65);
         }
+        if (hadRuntimeError) {
+            System.exit(70);
+        }
     }
 
     /**
@@ -59,18 +66,25 @@ public class Lox {
         }
     }
 
+    /**
+     * 执行源码
+     * @param source
+     */
     private static void run(String source) {
         Scanner scanner = new Scanner(source);
-        List<Token> tokens = scanner.scanTokens();
+        List<Token> tokens = scanner.scanTokens(); // 扫描成token
 
         Parser parser = new Parser(tokens);
-        Expr expression = parser.parse();
+        Expr expression = parser.parse(); // 解析成表达式（抽象语法树）
 
         if (hadError){
             return;
         }
 
-        System.out.println(new AstPrinter().print(expression));
+        // 执行表达式
+        interpreter.interpret(expression);
+
+//        System.out.println(new AstPrinter().print(expression));
 
         /*for (Token token : tokens) {
             System.out.println(token);
@@ -94,5 +108,11 @@ public class Lox {
         } else {
             report(token.line, " at '" + token.lexeme + "'", message);
         }
+    }
+
+    static void runtimeError(RuntimeError error) {
+        System.err.println(error.getMessage() +
+                "\n[line " + error.token.line + "]");
+        hadRuntimeError = true;
     }
 }
