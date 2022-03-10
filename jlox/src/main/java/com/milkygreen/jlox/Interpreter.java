@@ -1,22 +1,47 @@
 package com.milkygreen.jlox;
 
+import java.util.List;
+
 /**
- * 解释器，用来执行表达式。
- * 实现了Expr.Visitor，以Visitor模式来为不同的表达式类型提供计算能力。
+ * 解释器，核心执行类型，负责对lox语言的执行
+ * 实现了Visitor，以Visitor模式来为不同的表达式类型提供计算能力。
  */
-public class Interpreter implements Expr.Visitor<Object>{
+public class Interpreter implements Expr.Visitor<Object>,
+                                    Stmt.Visitor<Void> {
+
+    // 全局上下文
+    private Environment environment = new Environment();
 
     /**
      * 执行传入的表达式
-     * @param expression
+     * @param statements
      */
-    void interpret(Expr expression) {
+    void interpret(List<Stmt> statements) {
         try {
-            Object value = evaluate(expression);
-            System.out.println(stringify(value));
+            // 逐行执行声明
+            for (Stmt statement : statements) {
+                execute(statement);
+            }
         } catch (RuntimeError error) {
             Lox.runtimeError(error);
         }
+    }
+
+    /**
+     * 通过 visitor 模式执行不通Stmt对应的操作
+     * @param stmt
+     */
+    private void execute(Stmt stmt) {
+        stmt.accept(this);
+    }
+
+    /**
+     * 对指定表达式执行计算
+     * @param expr
+     * @return
+     */
+    private Object evaluate(Expr expr) {
+        return expr.accept(this);
     }
 
     /**
@@ -173,6 +198,28 @@ public class Interpreter implements Expr.Visitor<Object>{
     }
 
     /**
+     * 执行变量
+     * @param expr
+     * @return
+     */
+    @Override
+    public Object visitVariableExpr(Expr.Variable expr) {
+        return this.environment.get(expr.name); // 将表达式的值从上下文中取出
+    }
+
+    /**
+     * 执行变量重置
+     * @param expr
+     * @return
+     */
+    @Override
+    public Object visitAssignExpr(Expr.Assign expr) {
+        Object value = evaluate(expr.value); // 先执行右边的表达式
+        environment.assign(expr.name, value); // 把新值放到当前环境中
+        return value;
+    }
+
+    /**
      * true false的判断
      * null或者false的时候返回false,其他情况为true
      * @param object
@@ -188,12 +235,75 @@ public class Interpreter implements Expr.Visitor<Object>{
         return true;
     }
 
+
+
     /**
-     * 对指定表达式执行计算
-     * @param expr
+     * 执行代码块
+     * @param statements 声明列表
+     * @param environment 代码块对应的上下文环境
+     */
+    void executeBlock(List<Stmt> statements,
+                      Environment environment) {
+        // 代码块有可能是嵌套很多层的，当前的 this.environment 是上一层的，先记录一下，等执行完之后需要还原，类似回溯。
+        Environment previous = this.environment;
+        try {
+            this.environment = environment; // this.environment设置成自己的
+
+            for (Stmt statement : statements) { // 逐行执行语句
+                execute(statement);
+            }
+        } finally {
+            this.environment = previous; // 还原执行前的 environment
+        }
+    }
+
+    /**
+     * 执行代码块类型Stmt
+     * @param stmt
      * @return
      */
-    private Object evaluate(Expr expr) {
-        return expr.accept(this);
+    @Override
+    public Void visitBlockStmt(Stmt.Block stmt) {
+        executeBlock(stmt.statements, new Environment(environment));
+        return null;
+    }
+
+    /**
+     * 执行Expression类型的Stmt
+     * @param stmt
+     * @return
+     */
+    @Override
+    public Void visitExpressionStmt(Stmt.Expression stmt) {
+        evaluate(stmt.expression); // 直接执行里面的表达式
+        return null;
+    }
+
+    /**
+     * 执行打印类型的stmt
+     * @param stmt
+     * @return
+     */
+    @Override
+    public Void visitPrintStmt(Stmt.Print stmt) {
+        Object value = evaluate(stmt.expression);
+        System.out.println(stringify(value));
+        return null;
+    }
+
+    /**
+     * 执行变量定义Stmt
+     * @param stmt
+     * @return
+     */
+    @Override
+    public Void visitVarStmt(Stmt.Var stmt) {
+        Object value = null;
+        if (stmt.initializer != null) {
+            value = evaluate(stmt.initializer); // 执行initializer的表达式，或者值
+        }
+
+        environment.define(stmt.name.lexeme, value); // 将变量和值放到上下文中
+        return null;
     }
 }

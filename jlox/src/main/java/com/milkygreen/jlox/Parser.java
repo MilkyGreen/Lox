@@ -1,5 +1,6 @@
 package com.milkygreen.jlox;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static com.milkygreen.jlox.TokenType.*;
@@ -24,19 +25,131 @@ public class Parser {
      * 对tokens进行解析
      * 采用递归下降的解析方法。对不同的操作划分优先级，每个等级可以解析大于等于自身级别的操作。
      * 比如：equality级别小于comparison，因此equality()会优先交给comparison()解析，之后再尝试自己解析。
-     * @return Expr
+     * @return List<Stmt>
      */
-    Expr parse() {
+    List<Stmt> parse() {
+        List<Stmt> statements = new ArrayList<>();
+        while (!isAtEnd()) {
+            statements.add(declaration());
+        }
+
+        return statements;
+    }
+
+    /**
+     * 解析声明
+     * 分为变量定义声明和其他声明
+     *
+     * @return
+     */
+    private Stmt declaration() {
         try {
-            return expression();
+            if (match(VAR)){    // var 开头说明定义了一个变量
+                return varDeclaration();
+            }
+            return statement();
         } catch (ParseError error) {
+            synchronize();
             return null;
         }
     }
 
-    private Expr expression() {
-        return equality();
+    /**
+     * 处理非变量定义声明
+     * @return
+     */
+    private Stmt statement() {
+        if (match(PRINT)){
+            return printStatement();    // lox里规定print也算一个声明
+        }
+        if (match(LEFT_BRACE)) {
+            return new Stmt.Block(block()); // '{' 开头代表找到了一个代码块
+        }
+
+        return expressionStatement();   // 普通表达式类型的声明
     }
+
+    /**
+     * 打印类型声明
+     * @return
+     */
+    private Stmt printStatement() {
+        Expr value = expression();
+        consume(SEMICOLON, "Expect ';' after value.");
+        return new Stmt.Print(value);
+    }
+
+    /**
+     * 处理一个变量定义声明
+     * @return
+     */
+    private Stmt varDeclaration() {
+        // var后面必须是一个变量名，IDENTIFIER类型的token
+        Token name = consume(IDENTIFIER, "Expect variable name.");
+        // 变量可以没有初始表达式
+        Expr initializer = null;
+        if (match(EQUAL)) {
+            initializer = expression(); // 等号后面的属于变量值的表达式
+        }
+        // 消费最后的分号，分号必须要有
+        consume(SEMICOLON, "Expect ';' after variable declaration.");
+        return new Stmt.Var(name, initializer);
+    }
+
+    /**
+     * 普通表达式声明（一个表达式也算一个声明）
+     * @return
+     */
+    private Stmt expressionStatement() {
+        Expr expr = expression();
+        consume(SEMICOLON, "Expect ';' after expression.");
+        return new Stmt.Expression(expr);
+    }
+
+    /**
+     * 处理代码块
+     * @return
+     */
+    private List<Stmt> block() {
+        // 代码块里面有一系列的声明
+        List<Stmt> statements = new ArrayList<>();
+
+        // 遇到 '}' 之前一直解析块里的声明
+        while (!check(RIGHT_BRACE) && !isAtEnd()) {
+            statements.add(declaration());
+        }
+
+        consume(RIGHT_BRACE, "Expect '}' after block.");
+        return statements;
+    }
+
+    /**
+     * 从token中识别出表达式
+     * @return
+     */
+    private Expr expression() {
+        return assignment();
+    }
+
+    private Expr assignment() {
+        Expr expr = equality();
+
+        if (match(EQUAL)) {
+            Token equals = previous();
+            Expr value = assignment();
+
+            if (expr instanceof Expr.Variable) {
+                Token name = ((Expr.Variable)expr).name;
+                return new Expr.Assign(name, value);
+            }
+
+            error(equals, "Invalid assignment target.");
+        }
+
+        return expr;
+    }
+
+
 
     /**
      * 处理等于、不等于级别的表达式
@@ -135,6 +248,10 @@ public class Parser {
             return new Expr.Literal(previous().literal);
         }
 
+        if (match(IDENTIFIER)) {
+            return new Expr.Variable(previous());
+        }
+
         if (match(LEFT_PAREN)) {
             Expr expr = expression();
             consume(RIGHT_PAREN, "Expect ')' after expression.");
@@ -195,12 +312,16 @@ public class Parser {
         return tokens.get(current - 1);
     }
 
-
+    /**
+     * 消费下一个token，如果类型不符，则报错
+     * @param type
+     * @param message
+     * @return
+     */
     private Token consume(TokenType type, String message) {
         if (check(type)){
             return advance();
         }
-
         throw error(peek(), message);
     }
 

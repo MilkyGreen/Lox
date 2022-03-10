@@ -75,14 +75,14 @@ public class Lox {
         List<Token> tokens = scanner.scanTokens(); // 扫描成token
 
         Parser parser = new Parser(tokens);
-        Expr expression = parser.parse(); // 解析成表达式（抽象语法树）
+        List<Stmt> statements = parser.parse();
 
         if (hadError){
             return;
         }
 
         // 执行表达式
-        interpreter.interpret(expression);
+        interpreter.interpret(statements);
 
 //        System.out.println(new AstPrinter().print(expression));
 
