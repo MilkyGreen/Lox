@@ -13,12 +13,12 @@ public class Interpreter implements Expr.Visitor<Object>,
     private Environment environment = new Environment();
 
     /**
-     * 执行传入的表达式
+     * 解释执行
      * @param statements
      */
     void interpret(List<Stmt> statements) {
         try {
-            // 逐行执行声明
+            // 逐行执行 statement
             for (Stmt statement : statements) {
                 execute(statement);
             }
@@ -28,7 +28,7 @@ public class Interpreter implements Expr.Visitor<Object>,
     }
 
     /**
-     * 通过 visitor 模式执行不通Stmt对应的操作
+     * 执行 Stmt
      * @param stmt
      */
     private void execute(Stmt stmt) {
@@ -36,7 +36,7 @@ public class Interpreter implements Expr.Visitor<Object>,
     }
 
     /**
-     * 对指定表达式执行计算
+     * 执行 Expr
      * @param expr
      * @return
      */
@@ -64,7 +64,7 @@ public class Interpreter implements Expr.Visitor<Object>,
     }
 
     /**
-     * 二元表达式，先计算子表达式的值，再根据符号进行操作
+     * 执行二元表达式，先计算子表达式的值，再根据符号进行操作
      * @param expr
      * @return
      */
@@ -112,6 +112,20 @@ public class Interpreter implements Expr.Visitor<Object>,
 
         // Unreachable.
         return null;
+    }
+
+    /**
+     * 检查两个操作元是否是数字
+     * @param operator
+     * @param left
+     * @param right
+     */
+    private void checkNumberOperands(Token operator,
+                                     Object left, Object right) {
+        if (left instanceof Double && right instanceof Double){
+            return;
+        }
+        throw new RuntimeError(operator, "Operands must be numbers.");
     }
 
     /**
@@ -163,17 +177,30 @@ public class Interpreter implements Expr.Visitor<Object>,
     }
 
     /**
-     * 检查两个操作元是否是数字
-     * @param operator
-     * @param left
-     * @param right
+     * 执行逻辑表达式
+     * 结构类似二元操作，不过使用了单独的类Logical
+     * @param expr
+     * @return
      */
-    private void checkNumberOperands(Token operator,
-                                     Object left, Object right) {
-        if (left instanceof Double && right instanceof Double){
-            return;
+    @Override
+    public Object visitLogicalExpr(Expr.Logical expr) {
+        Object left = evaluate(expr.left); // 先执行左边
+
+        if (expr.operator.type == TokenType.OR) {
+            // or 操作
+            if (isTruthy(left)){
+                return left;
+            }else{
+                return evaluate(expr.right);
+            }
+        } else {
+            // and 操作
+            if (!isTruthy(left)){
+                return left;
+            }else{
+                return evaluate(expr.right);
+            }
         }
-        throw new RuntimeError(operator, "Operands must be numbers.");
     }
 
     /**
@@ -204,7 +231,7 @@ public class Interpreter implements Expr.Visitor<Object>,
      */
     @Override
     public Object visitVariableExpr(Expr.Variable expr) {
-        return this.environment.get(expr.name); // 将表达式的值从上下文中取出
+        return this.environment.get(expr.name); // 将变量的值从上下文中取出
     }
 
     /**
@@ -280,6 +307,21 @@ public class Interpreter implements Expr.Visitor<Object>,
     }
 
     /**
+     * 执行if语句
+     * @param stmt
+     * @return
+     */
+    @Override
+    public Void visitIfStmt(Stmt.If stmt) {
+        if (isTruthy(evaluate(stmt.condition))) {
+            execute(stmt.thenBranch);
+        } else if (stmt.elseBranch != null) {
+            execute(stmt.elseBranch);
+        }
+        return null;
+    }
+
+    /**
      * 执行打印类型的stmt
      * @param stmt
      * @return
@@ -304,6 +346,20 @@ public class Interpreter implements Expr.Visitor<Object>,
         }
 
         environment.define(stmt.name.lexeme, value); // 将变量和值放到上下文中
+        return null;
+    }
+
+    /**
+     * 执行 while循环
+     * @param stmt
+     * @return
+     */
+    @Override
+    public Void visitWhileStmt(Stmt.While stmt) {
+        // 就用java的while循环执行
+        while (isTruthy(evaluate(stmt.condition))) {
+            execute(stmt.body);
+        }
         return null;
     }
 }

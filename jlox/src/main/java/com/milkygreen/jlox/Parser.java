@@ -1,6 +1,7 @@
 package com.milkygreen.jlox;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static com.milkygreen.jlox.TokenType.*;
@@ -59,14 +60,109 @@ public class Parser {
      * @return
      */
     private Stmt statement() {
+        if (match(FOR)) {
+            return forStatement();
+        }
+        if (match(IF)) {
+            return ifStatement();
+        }
         if (match(PRINT)){
             return printStatement();    // lox里规定print也算一个声明
+        }
+        if (match(WHILE)) {
+            return whileStatement();
         }
         if (match(LEFT_BRACE)) {
             return new Stmt.Block(block()); // '{' 开头代表找到了一个代码块
         }
 
         return expressionStatement();   // 普通表达式类型的声明
+    }
+
+    /**
+     * for循环
+     * 所有的for循环都可以用while循环来表示，因此把for当成while的语法糖，遇到for最后转换成while循环来处理。
+     * @return
+     */
+    private Stmt forStatement() {
+        consume(LEFT_PAREN, "Expect '(' after 'for'.");
+
+        Stmt initializer;   // 初始化
+        if (match(SEMICOLON)) {
+            initializer = null; // 没有初始化
+        } else if (match(VAR)) {
+            initializer = varDeclaration(); // 初始化变量
+        } else {
+            initializer = expressionStatement(); // 执行一个表达式
+        }
+
+        Expr condition = null; // 循环条件
+        if (!check(SEMICOLON)) {
+            condition = expression(); // 有循环条件
+        }
+        consume(SEMICOLON, "Expect ';' after loop condition.");
+
+        Expr increment = null; // 递增条件
+        if (!check(RIGHT_PAREN)) {
+            increment = expression(); // 递增条件也是个表达式
+        }
+        consume(RIGHT_PAREN, "Expect ')' after for clauses.");
+
+        Stmt body = statement(); // for循环的代码
+
+        // 递增每次都在循环体之后执行，如果存在，把它放在循环体后面组成一个代码块，每次执行
+        if (increment != null) {
+            body = new Stmt.Block(
+                    Arrays.asList(
+                            body,
+                            new Stmt.Expression(increment)));
+        }
+
+        // 如果没有条件表达式，则是true，一直循环
+        if (condition == null) {
+            condition = new Expr.Literal(true);
+        }
+        // 构造while循环
+        body = new Stmt.While(condition, body);
+
+        // 如果有初始化表达式，放在while之前，组成一个代码块，这样会在while之前执行，新增的变量对循环体里可见
+        if (initializer != null) {
+            body = new Stmt.Block(Arrays.asList(initializer, body));
+        }
+
+        return body;
+    }
+
+    /**
+     * while循环
+     * @return
+     */
+    private Stmt whileStatement() {
+        consume(LEFT_PAREN, "Expect '(' after 'while'.");
+        Expr condition = expression();      // while括号里面的条件表达式
+        consume(RIGHT_PAREN, "Expect ')' after condition.");
+        Stmt body = statement();
+
+        return new Stmt.While(condition, body);
+    }
+
+
+    /**
+     * if else 声明
+     * @return
+     */
+    private Stmt ifStatement() {
+        consume(LEFT_PAREN, "Expect '(' after 'if'.");
+        Expr condition = expression();
+        consume(RIGHT_PAREN, "Expect ')' after if condition.");
+
+        Stmt thenBranch = statement();
+        Stmt elseBranch = null;
+        if (match(ELSE)) {
+            elseBranch = statement();
+        }
+
+        return new Stmt.If(condition, thenBranch, elseBranch);
     }
 
     /**
@@ -131,12 +227,16 @@ public class Parser {
         return assignment();
     }
 
+    /**
+     * 变量重新赋值操作
+     * @return
+     */
     private Expr assignment() {
-        Expr expr = equality();
+        Expr expr = or();
 
         if (match(EQUAL)) {
             Token equals = previous();
-            Expr value = assignment();
+            Expr value = assignment(); // 要赋的值，也是个表达式
 
             if (expr instanceof Expr.Variable) {
                 Token name = ((Expr.Variable)expr).name;
@@ -149,6 +249,37 @@ public class Parser {
         return expr;
     }
 
+    /**
+     * 逻辑操作 ||
+     * @return
+     */
+    private Expr or() {
+        Expr expr = and();
+
+        while (match(OR)) {
+            Token operator = previous();
+            Expr right = and();
+            expr = new Expr.Logical(expr, operator, right);
+        }
+
+        return expr;
+    }
+
+    /**
+     * 逻辑操作 &&
+     * @return
+     */
+    private Expr and() {
+        Expr expr = equality();
+
+        while (match(AND)) {
+            Token operator = previous();
+            Expr right = equality();
+            expr = new Expr.Logical(expr, operator, right);
+        }
+
+        return expr;
+    }
 
 
     /**
