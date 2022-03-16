@@ -1,5 +1,6 @@
 package com.milkygreen.jlox;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -9,8 +10,26 @@ import java.util.List;
 public class Interpreter implements Expr.Visitor<Object>,
                                     Stmt.Visitor<Void> {
 
-    // 全局上下文
-    private Environment environment = new Environment();
+    final Environment globals = new Environment();
+    private Environment environment = globals;
+
+    Interpreter() {
+        // 在这里定义 native 函数，放在 globals 作用域里
+        globals.define("clock", new LoxCallable() {
+            @Override
+            public int arity() { return 0; }
+
+            @Override
+            public Object call(Interpreter interpreter,
+                               List<Object> arguments) {
+                return (double)System.currentTimeMillis() / 1000.0;
+            }
+
+            @Override
+            public String toString() { return "<native fn>"; }
+        });
+    }
+
 
     /**
      * 解释执行
@@ -112,6 +131,35 @@ public class Interpreter implements Expr.Visitor<Object>,
 
         // Unreachable.
         return null;
+    }
+
+    /**
+     * 执行函数调用
+     * @param expr
+     * @return
+     */
+    @Override
+    public Object visitCallExpr(Expr.Call expr) {
+        // 函数对象
+        Object callee = evaluate(expr.callee);
+
+        // 解析实际入参列表
+        List<Object> arguments = new ArrayList<>();
+        for (Expr argument : expr.arguments) {
+            arguments.add(evaluate(argument)); // 执行每个表达式
+        }
+
+        if (!(callee instanceof LoxCallable)) {
+            throw new RuntimeError(expr.paren,
+                    "Can only call functions and classes.");
+        }
+        LoxCallable function = (LoxCallable)callee;
+        if (arguments.size() != function.arity()) {
+            throw new RuntimeError(expr.paren, "Expected " +
+                    function.arity() + " arguments but got " +
+                    arguments.size() + ".");
+        }
+        return function.call(this, arguments);
     }
 
     /**
@@ -307,6 +355,19 @@ public class Interpreter implements Expr.Visitor<Object>,
     }
 
     /**
+     * 执行函数定义语句
+     * @param stmt
+     * @return
+     */
+    @Override
+    public Void visitFunctionStmt(Stmt.Function stmt) {
+        // 创建函数对象，放到上下文环境中
+        LoxFunction function = new LoxFunction(stmt, environment);
+        environment.define(stmt.name.lexeme, function);
+        return null;
+    }
+
+    /**
      * 执行if语句
      * @param stmt
      * @return
@@ -331,6 +392,20 @@ public class Interpreter implements Expr.Visitor<Object>,
         Object value = evaluate(stmt.expression);
         System.out.println(stringify(value));
         return null;
+    }
+
+    /**
+     * 执行return语句
+     * @param stmt
+     * @return
+     */
+    @Override
+    public Void visitReturnStmt(Stmt.Return stmt) {
+        Object value = null;
+        if (stmt.value != null){
+            value = evaluate(stmt.value);
+        }
+        throw new Return(value);
     }
 
     /**

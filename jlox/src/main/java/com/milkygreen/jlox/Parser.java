@@ -39,12 +39,15 @@ public class Parser {
 
     /**
      * 解析声明
-     * 分为变量定义声明和其他声明
+     * 分为变量声明、函数声明和其他声明
      *
      * @return
      */
     private Stmt declaration() {
         try {
+            if (match(FUN)) {
+                return function("function");
+            }
             if (match(VAR)){    // var 开头说明定义了一个变量
                 return varDeclaration();
             }
@@ -56,7 +59,35 @@ public class Parser {
     }
 
     /**
-     * 处理非变量定义声明
+     * 函数声明
+     * @param kind 函数的类型，有函数和方法
+     * @return
+     */
+    private Stmt.Function function(String kind) {
+        // 函数名
+        Token name = consume(IDENTIFIER, "Expect " + kind + " name.");
+        // 左括号
+        consume(LEFT_PAREN, "Expect '(' after " + kind + " name.");
+        // 参数定义
+        List<Token> parameters = new ArrayList<>();
+        if (!check(RIGHT_PAREN)) {
+            do {
+                if (parameters.size() >= 255) {
+                    error(peek(), "Can't have more than 255 parameters.");
+                }
+                parameters.add(consume(IDENTIFIER, "Expect parameter name."));
+            } while (match(COMMA));
+        }
+        consume(RIGHT_PAREN, "Expect ')' after parameters.");
+
+        // 方法体是一个block
+        consume(LEFT_BRACE, "Expect '{' before " + kind + " body.");
+        List<Stmt> body = block();
+        return new Stmt.Function(name, parameters, body);
+    }
+
+    /**
+     * 处理其他声明
      * @return
      */
     private Stmt statement() {
@@ -69,6 +100,9 @@ public class Parser {
         if (match(PRINT)){
             return printStatement();    // lox里规定print也算一个声明
         }
+        if (match(RETURN)){
+            return returnStatement();
+        }
         if (match(WHILE)) {
             return whileStatement();
         }
@@ -77,6 +111,22 @@ public class Parser {
         }
 
         return expressionStatement();   // 普通表达式类型的声明
+    }
+
+    /**
+     * 返回值声明
+     * return后面跟一个表达式
+     * @return
+     */
+    private Stmt returnStatement() {
+        Token keyword = previous();
+        Expr value = null;
+        if (!check(SEMICOLON)) {
+            value = expression();
+        }
+
+        consume(SEMICOLON, "Expect ';' after return value.");
+        return new Stmt.Return(keyword, value);
     }
 
     /**
@@ -357,7 +407,49 @@ public class Parser {
             return new Expr.Unary(operator, right);
         }
 
-        return primary();
+        return call();
+    }
+
+    /**
+     * 函数调用
+     * @return
+     */
+    private Expr call() {
+        // 函数名（如果后面有括号的话）
+        Expr expr = primary();
+
+        while (true) {
+            if (match(LEFT_PAREN)) {
+                expr = finishCall(expr);
+            } else {
+                break;
+            }
+        }
+
+        return expr;
+    }
+
+    /**
+     * 解析函数的调用表达式
+     * @param callee 被调用的函数
+     * @return
+     */
+    private Expr finishCall(Expr callee) {
+        // 解析实际入参列表
+        List<Expr> arguments = new ArrayList<>();
+        if (!check(RIGHT_PAREN)) {
+            do {
+                if (arguments.size() >= 255) {
+                    error(peek(), "Can't have more than 255 arguments.");
+                }
+                arguments.add(expression()); // 每个入参都是一个表达式
+            } while (match(COMMA));
+        }
+
+        Token paren = consume(RIGHT_PAREN,
+                "Expect ')' after arguments.");
+
+        return new Expr.Call(callee, paren, arguments);
     }
 
     /**
