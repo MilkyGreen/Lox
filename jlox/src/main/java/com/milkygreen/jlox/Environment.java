@@ -73,4 +73,32 @@ class Environment {
         throw new RuntimeError(name,
                 "Undefined variable '" + name.lexeme + "'.");
     }
+
+    /**
+     * 查到指定层级的变量值
+     * @param distance
+     * @param name
+     * @return
+     */
+    Object getAt(int distance, String name) {
+        return ancestor(distance).values.get(name);
+    }
+
+    /**
+     * 按层级查到上下文
+     * @param distance
+     * @return
+     */
+    Environment ancestor(int distance) {
+        Environment environment = this;
+        for (int i = 0; i < distance; i++) {
+            environment = environment.enclosing;
+        }
+
+        return environment;
+    }
+
+    void assignAt(int distance, Token name, Object value) {
+        ancestor(distance).values.put(name.lexeme, value);
+    }
 }

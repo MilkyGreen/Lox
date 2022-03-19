@@ -53,6 +53,7 @@ public class Parser {
             }
             return statement();
         } catch (ParseError error) {
+            // 如果编译报错，需要记录一下错误然后继续编译，尽量一次性抛出更多的编译错误
             synchronize();
             return null;
         }
@@ -80,7 +81,7 @@ public class Parser {
         }
         consume(RIGHT_PAREN, "Expect ')' after parameters.");
 
-        // 方法体是一个block
+        // 方法体类似一个block
         consume(LEFT_BRACE, "Expect '{' before " + kind + " body.");
         List<Stmt> body = block();
         return new Stmt.Function(name, parameters, body);
@@ -485,7 +486,7 @@ public class Parser {
     }
 
     /**
-     * 判断tokenType是否符合预期
+     * 判断tokenType是否符合预期，如果符合，消费掉这个token
      * @param types 预期类型
      * @return
      */

@@ -1,7 +1,9 @@
 package com.milkygreen.jlox;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 解释器，核心执行类型，负责对lox语言的执行
@@ -10,8 +12,14 @@ import java.util.List;
 public class Interpreter implements Expr.Visitor<Object>,
                                     Stmt.Visitor<Void> {
 
+    // 全局上下文
     final Environment globals = new Environment();
+    // 当前上下文
     private Environment environment = globals;
+
+    // Resolver通过静态分析，记录的每个变量应该在哪一层的上下文中查找
+    private final Map<Expr, Integer> locals = new HashMap<>();
+
 
     Interpreter() {
         // 在这里定义 native 函数，放在 globals 作用域里
@@ -61,6 +69,15 @@ public class Interpreter implements Expr.Visitor<Object>,
      */
     private Object evaluate(Expr expr) {
         return expr.accept(this);
+    }
+
+    /**
+     * 记录变量和定义它的上下文层级
+     * @param expr
+     * @param depth
+     */
+    void resolve(Expr expr, int depth) {
+        locals.put(expr, depth);
     }
 
     /**
@@ -279,7 +296,27 @@ public class Interpreter implements Expr.Visitor<Object>,
      */
     @Override
     public Object visitVariableExpr(Expr.Variable expr) {
-        return this.environment.get(expr.name); // 将变量的值从上下文中取出
+
+        return lookUpVariable(expr.name, expr);
+
+//        return this.environment.get(expr.name); // 将变量的值从上下文中取出
+    }
+
+    /**
+     * 查找变量的值
+     * @param name
+     * @param expr
+     * @return
+     */
+    private Object lookUpVariable(Token name, Expr expr) {
+        // 先取层级
+        Integer distance = locals.get(expr);
+        if (distance != null) {
+            return environment.getAt(distance, name.lexeme);
+        } else {
+            // 没有层级的是全局变量
+            return globals.get(name);
+        }
     }
 
     /**
@@ -290,7 +327,15 @@ public class Interpreter implements Expr.Visitor<Object>,
     @Override
     public Object visitAssignExpr(Expr.Assign expr) {
         Object value = evaluate(expr.value); // 先执行右边的表达式
-        environment.assign(expr.name, value); // 把新值放到当前环境中
+//        environment.assign(expr.name, value); // 把新值放到当前环境中
+
+        Integer distance = locals.get(expr);
+        if (distance != null) {
+            environment.assignAt(distance, expr.name, value);
+        } else {
+            globals.assign(expr.name, value);
+        }
+
         return value;
     }
 

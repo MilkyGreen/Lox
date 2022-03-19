@@ -81,14 +81,15 @@ public class Lox {
             return;
         }
 
+        // 静态分析
+        Resolver resolver = new Resolver(interpreter);
+        resolver.resolve(statements);
+        if (hadError){
+            return;
+        }
+
         // 执行表达式
         interpreter.interpret(statements);
-
-//        System.out.println(new AstPrinter().print(expression));
-
-        /*for (Token token : tokens) {
-            System.out.println(token);
-        }*/
     }
 
     static void error(int line, String message) {
