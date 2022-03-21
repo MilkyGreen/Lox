@@ -45,6 +45,9 @@ public class Parser {
      */
     private Stmt declaration() {
         try {
+            if (match(CLASS)){
+                return classDeclaration();
+            }
             if (match(FUN)) {
                 return function("function");
             }
@@ -57,6 +60,32 @@ public class Parser {
             synchronize();
             return null;
         }
+    }
+
+    /**
+     * 类声明
+     * @return
+     */
+    private Stmt classDeclaration() {
+        Token name = consume(IDENTIFIER, "Expect class name.");
+
+        Expr.Variable superclass = null;
+        if (match(LESS)) {  // 有父类
+            consume(IDENTIFIER, "Expect superclass name.");
+            superclass = new Expr.Variable(previous());
+        }
+
+        consume(LEFT_BRACE, "Expect '{' before class body.");
+
+        // 类里面定义的是一个个方法，解析成方法列表
+        List<Stmt.Function> methods = new ArrayList<>();
+        while (!check(RIGHT_BRACE) && !isAtEnd()) {
+            methods.add(function("method"));
+        }
+
+        consume(RIGHT_BRACE, "Expect '}' after class body.");
+
+        return new Stmt.Class(name, superclass, methods);
     }
 
     /**
@@ -292,6 +321,10 @@ public class Parser {
             if (expr instanceof Expr.Variable) {
                 Token name = ((Expr.Variable)expr).name;
                 return new Expr.Assign(name, value);
+            } else if (expr instanceof Expr.Get) {
+                // set方法其实是左边先出现get，后面跟 = value
+                Expr.Get get = (Expr.Get)expr;
+                return new Expr.Set(get.object, get.name, value);
             }
 
             error(equals, "Invalid assignment target.");
@@ -422,6 +455,12 @@ public class Parser {
         while (true) {
             if (match(LEFT_PAREN)) {
                 expr = finishCall(expr);
+            } else if (match(DOT)) {
+                // 出现点，代表是一个get表达式，如 person.name，或者 Person().son.name,前面可以出现多个方法调用和get
+                // 最后一个点的后面跟的IDENTIFIER才是要赋值的字段
+                Token name = consume(IDENTIFIER,
+                        "Expect property name after '.'.");
+                expr = new Expr.Get(expr, name);
             } else {
                 break;
             }
@@ -470,6 +509,17 @@ public class Parser {
 
         if (match(NUMBER, STRING)) {
             return new Expr.Literal(previous().literal);
+        }
+
+        if (match(SUPER)) {
+            Token keyword = previous();
+            consume(DOT, "Expect '.' after 'super'.");
+            Token method = consume(IDENTIFIER, "Expect superclass method name.");
+            return new Expr.Super(keyword, method);
+        }
+
+        if (match(THIS)){
+            return new Expr.This(previous());
         }
 
         if (match(IDENTIFIER)) {

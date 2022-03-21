@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 解释器，核心执行类型，负责对lox语言的执行
+ * 解释器，负责对lox语言的执行
  * 实现了Visitor，以Visitor模式来为不同的表达式类型提供计算能力。
  */
 public class Interpreter implements Expr.Visitor<Object>,
@@ -177,6 +177,76 @@ public class Interpreter implements Expr.Visitor<Object>,
                     arguments.size() + ".");
         }
         return function.call(this, arguments);
+    }
+
+    /**
+     * getter表达式
+     * @param expr
+     * @return
+     */
+    @Override
+    public Object visitGetExpr(Expr.Get expr) {
+        // getter的主体必须是一个类实例
+        Object object = evaluate(expr.object);
+        if (object instanceof LoxInstance) {
+            // 从实例中查找出字段的值
+            return ((LoxInstance) object).get(expr.name);
+        }
+
+        throw new RuntimeError(expr.name,
+                "Only instances have properties.");
+    }
+
+    /**
+     * setter表达式
+     * @param expr
+     * @return
+     */
+    @Override
+    public Object visitSetExpr(Expr.Set expr) {
+        Object object = evaluate(expr.object);
+        // getter的主体必须是一个类实例
+        if (!(object instanceof LoxInstance)) {
+            throw new RuntimeError(expr.name,
+                    "Only instances have fields.");
+        }
+
+        Object value = evaluate(expr.value);
+        ((LoxInstance)object).set(expr.name, value);
+        return value;
+    }
+
+    /**
+     * super关键字
+     * @param expr
+     * @return
+     */
+    @Override
+    public Object visitSuperExpr(Expr.Super expr) {
+        int distance = locals.get(expr);    // super当做变量来解析，查找目标和当前上下文的距离
+        LoxClass superclass = (LoxClass)environment.getAt(distance, "super");   // 找出父类
+        // 在super的下一层可以找到子类实例。
+        // 因为super表达式一定处于一个方法的调用过程中，而每个方法的在调用之前都是绑定了自己的this的。
+        // 且super所在的上下文位于this上下文上一层的位置。具体可见类声明方法。
+        LoxInstance object = (LoxInstance)environment.getAt(distance - 1, "this");
+        // 找到父类的方法
+        LoxFunction method = superclass.findMethod(expr.method.lexeme);
+        if (method == null) {
+            throw new RuntimeError(expr.method, "Undefined property '" + expr.method.lexeme + "'.");
+        }
+        // 父类的方法绑定this为当前的实例
+        return method.bind(object);
+    }
+
+    /**
+     * this表达式
+     * @param expr
+     * @return
+     */
+    @Override
+    public Object visitThisExpr(Expr.This expr) {
+        // this已经放入的上下文中，直接从里面查找
+        return lookUpVariable(expr.keyword, expr);
     }
 
     /**
@@ -389,6 +459,50 @@ public class Interpreter implements Expr.Visitor<Object>,
     }
 
     /**
+     * 执行类声明
+     * @param stmt
+     * @return
+     */
+    @Override
+    public Void visitClassStmt(Stmt.Class stmt) {
+        Object superclass = null;
+        if (stmt.superclass != null) {
+            // 父类必须是一个class
+            superclass = evaluate(stmt.superclass);
+            if (!(superclass instanceof LoxClass)) {
+                throw new RuntimeError(stmt.superclass.name,"Superclass must be a class.");
+            }
+        }
+
+        // 将类声明放入上下文，此时值是null，代表还没解析完
+        environment.define(stmt.name.lexeme, null);
+
+        // 如果有父类，需要把super关键字放入上下文中。这样每个方法的上下文路径中都会有super
+        if (stmt.superclass != null) {
+            environment = new Environment(environment);
+            environment.define("super", superclass);
+        }
+
+        // 依次解析方法列表，需要区分是否是init
+        Map<String, LoxFunction> methods = new HashMap<>();
+        for (Stmt.Function method : stmt.methods) {
+            LoxFunction function = new LoxFunction(method, environment, method.name.lexeme.equals("init"));
+            methods.put(method.name.lexeme, function);
+        }
+        // 新建class对象
+        LoxClass klass = new LoxClass(stmt.name.lexeme, (LoxClass)superclass, methods);
+
+        if (superclass != null) {
+            // 还原上下文。因为只有类里面才能用这个super，外面的不能用
+            environment = environment.enclosing;
+        }
+
+        // 更新上下文
+        environment.assign(stmt.name, klass);
+        return null;
+    }
+
+    /**
      * 执行Expression类型的Stmt
      * @param stmt
      * @return
@@ -407,7 +521,7 @@ public class Interpreter implements Expr.Visitor<Object>,
     @Override
     public Void visitFunctionStmt(Stmt.Function stmt) {
         // 创建函数对象，放到上下文环境中
-        LoxFunction function = new LoxFunction(stmt, environment);
+        LoxFunction function = new LoxFunction(stmt, environment,false);
         environment.define(stmt.name.lexeme, function);
         return null;
     }

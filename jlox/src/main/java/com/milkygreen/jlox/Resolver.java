@@ -23,7 +23,18 @@ public class Resolver implements Expr.Visitor<Void>,Stmt.Visitor<Void>{
 
     private enum FunctionType {
         NONE,
-        FUNCTION
+        FUNCTION,
+        INITIALIZER,
+        METHOD
+    }
+
+    // 标记当前是否处于一个类中
+    private ClassType currentClass = ClassType.NONE;
+
+    private enum ClassType {
+        NONE,
+        CLASS,
+        SUBCLASS
     }
 
     Resolver(Interpreter interpreter) {
@@ -43,6 +54,43 @@ public class Resolver implements Expr.Visitor<Void>,Stmt.Visitor<Void>{
         for (Expr argument : expr.arguments) {
             resolve(argument);
         }
+        return null;
+    }
+
+    @Override
+    public Void visitGetExpr(Expr.Get expr) {
+        resolve(expr.object);
+        return null;
+    }
+
+    @Override
+    public Void visitSetExpr(Expr.Set expr) {
+        resolve(expr.value);
+        resolve(expr.object);
+        return null;
+    }
+
+    @Override
+    public Void visitSuperExpr(Expr.Super expr) {
+        if (currentClass == ClassType.NONE) {
+            Lox.error(expr.keyword,"Can't use 'super' outside of a class.");
+        } else if (currentClass != ClassType.SUBCLASS) {
+            Lox.error(expr.keyword,"Can't use 'super' in a class with no superclass.");
+        }
+
+        resolveLocal(expr, expr.keyword);
+        return null;
+    }
+
+    @Override
+    public Void visitThisExpr(Expr.This expr) {
+        // this只能在类中出现
+        if (currentClass == ClassType.NONE) {
+            Lox.error(expr.keyword,
+                    "Can't use 'this' outside of a class.");
+            return null;
+        }
+        resolveLocal(expr, expr.keyword);
         return null;
     }
 
@@ -111,6 +159,56 @@ public class Resolver implements Expr.Visitor<Void>,Stmt.Visitor<Void>{
         beginScope();
         resolve(stmt.statements);
         endScope();
+        return null;
+    }
+
+    @Override
+    public Void visitClassStmt(Stmt.Class stmt) {
+        // 首先表明当前处于一个类中
+        ClassType enclosingClass = currentClass;
+        currentClass = ClassType.CLASS;
+
+        declare(stmt.name);
+        define(stmt.name);
+
+        // 不能继承自己
+        if (stmt.superclass != null &&
+                stmt.name.lexeme.equals(stmt.superclass.name.lexeme)) {
+            Lox.error(stmt.superclass.name,
+                    "A class can't inherit from itself.");
+        }
+
+        if (stmt.superclass != null) {
+            currentClass = ClassType.SUBCLASS;
+            resolve(stmt.superclass);
+        }
+
+        // 如果有父类，增加super关键字
+        if (stmt.superclass != null) {
+            beginScope();
+            scopes.peek().put("super", true);
+        }
+
+        // 类里面属于一个新scope
+        beginScope();
+        // 把this关键字放进去
+        scopes.peek().put("this", true);
+
+        // 解析类里的方法
+        for (Stmt.Function method : stmt.methods) {
+            FunctionType declaration = FunctionType.METHOD; // 普通的方法是METHOD
+            if (method.name.lexeme.equals("init")) {
+                // init方法是INITIALIZER
+                declaration = FunctionType.INITIALIZER;
+            }
+            resolveFunction(method, declaration);
+        }
+        endScope();
+        // 父类增加了一层scope，最后关掉
+        if (stmt.superclass != null){
+            endScope();
+        }
+        currentClass = enclosingClass;
         return null;
     }
 
@@ -198,6 +296,11 @@ public class Resolver implements Expr.Visitor<Void>,Stmt.Visitor<Void>{
         }
 
         if (stmt.value != null) {
+            // 如果return值不等于空且在INITIALIZER方法中，是非法的
+            if (currentFunction == FunctionType.INITIALIZER) {
+                Lox.error(stmt.keyword,
+                        "Can't return a value from an initializer.");
+            }
             resolve(stmt.value);
         }
         return null;
