@@ -6,3 +6,21 @@ fun fib(n) {
 for (var i = 0; i < 20; i = i + 1) {
   print fib(i);
 }
+
+class dog{
+    bark(){
+        print "wang wang";
+    }
+}
+
+class hount < dog {
+
+    b(){
+        super.bark();
+        print this.a;
+    }
+}
+
+var h = hount();
+h.a = "hahahaha";
+h.b();

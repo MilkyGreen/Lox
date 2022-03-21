@@ -225,7 +225,7 @@ public class Interpreter implements Expr.Visitor<Object>,
     public Object visitSuperExpr(Expr.Super expr) {
         int distance = locals.get(expr);    // super当做变量来解析，查找目标和当前上下文的距离
         LoxClass superclass = (LoxClass)environment.getAt(distance, "super");   // 找出父类
-        // 在super的下一层可以找到子类实例。
+        // 在super的下一层可以找到 this 子类实例。
         // 因为super表达式一定处于一个方法的调用过程中，而每个方法的在调用之前都是绑定了自己的this的。
         // 且super所在的上下文位于this上下文上一层的位置。具体可见类声明方法。
         LoxInstance object = (LoxInstance)environment.getAt(distance - 1, "this");
