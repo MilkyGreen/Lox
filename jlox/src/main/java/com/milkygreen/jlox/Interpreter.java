@@ -567,6 +567,11 @@ public class Interpreter implements Expr.Visitor<Object>,
         throw new Return(value);
     }
 
+    @Override
+    public Void visitBreakStmt(Stmt.Break stmt) {
+        throw new Break();
+    }
+
     /**
      * 执行变量定义Stmt
      * @param stmt
@@ -592,7 +597,11 @@ public class Interpreter implements Expr.Visitor<Object>,
     public Void visitWhileStmt(Stmt.While stmt) {
         // 就用java的while循环执行
         while (isTruthy(evaluate(stmt.condition))) {
-            execute(stmt.body);
+            try {
+                execute(stmt.body);
+            } catch (Break e) {
+                break;
+            }
         }
         return null;
     }

@@ -43,6 +43,7 @@ public class Scanner {
         keywords.put("true",   TRUE);
         keywords.put("var",    VAR);
         keywords.put("while",  WHILE);
+        keywords.put("break",  BREAK);
     }
 
     Scanner(String source) {
@@ -91,10 +92,10 @@ public class Scanner {
                 addToken(DOT);
                 break;
             case '-':
-                addToken(MINUS);
+                addToken(match('-') ? MINUS_MINUS : MINUS);
                 break;
             case '+':
-                addToken(PLUS);
+                addToken(match('+') ? PLUS_PLUS : PLUS);
                 break;
             case ';':
                 addToken(SEMICOLON);

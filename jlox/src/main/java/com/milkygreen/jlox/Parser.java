@@ -133,6 +133,9 @@ public class Parser {
         if (match(RETURN)){
             return returnStatement();
         }
+        if (match(BREAK)){
+            return breakStatement();
+        }
         if (match(WHILE)) {
             return whileStatement();
         }
@@ -157,6 +160,12 @@ public class Parser {
 
         consume(SEMICOLON, "Expect ';' after return value.");
         return new Stmt.Return(keyword, value);
+    }
+
+    private Stmt breakStatement() {
+        Token keyword = previous();
+        consume(SEMICOLON, "Expect ';' after break value.");
+        return new Stmt.Break(keyword);
     }
 
     /**
@@ -316,6 +325,7 @@ public class Parser {
 
         if (match(EQUAL)) {
             Token equals = previous();
+
             Expr value = assignment(); // 要赋的值，也是个表达式
 
             if (expr instanceof Expr.Variable) {
@@ -328,6 +338,22 @@ public class Parser {
             }
 
             error(equals, "Invalid assignment target.");
+        }else if(match(PLUS_PLUS)){
+            Token line = previous();
+            if (expr instanceof Expr.Variable) {
+                Token name = ((Expr.Variable)expr).name;
+                return new Expr.Assign(name, new Expr.Binary(expr,new Token(PLUS,"+",null,line.line),new Expr.Literal(1d)));
+            }else{
+                error(line, "Invalid ++ target.");
+            }
+        }else if(match(MINUS_MINUS)){
+            Token line = previous();
+            if (expr instanceof Expr.Variable) {
+                Token name = ((Expr.Variable)expr).name;
+                return new Expr.Assign(name, new Expr.Binary(expr,new Token(MINUS,"-",null,line.line),new Expr.Literal(1d)));
+            }else{
+                error(line, "Invalid ++ target.");
+            }
         }
 
         return expr;

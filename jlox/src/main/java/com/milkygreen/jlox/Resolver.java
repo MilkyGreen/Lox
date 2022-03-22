@@ -37,6 +37,13 @@ public class Resolver implements Expr.Visitor<Void>,Stmt.Visitor<Void>{
         SUBCLASS
     }
 
+    private LoopType currentLoop = LoopType.NONE;
+
+    private enum LoopType {
+        NONE,
+        LOOP
+    }
+
     Resolver(Interpreter interpreter) {
         this.interpreter = interpreter;
     }
@@ -307,6 +314,15 @@ public class Resolver implements Expr.Visitor<Void>,Stmt.Visitor<Void>{
     }
 
     @Override
+    public Void visitBreakStmt(Stmt.Break stmt) {
+        if(currentLoop != LoopType.LOOP){
+            Lox.error(stmt.keyword,
+                    "Can't break a loop outside a loop.");
+        }
+        return null;
+    }
+
+    @Override
     public Void visitVarStmt(Stmt.Var stmt) {
         // 变量声明
         declare(stmt.name);
@@ -351,7 +367,10 @@ public class Resolver implements Expr.Visitor<Void>,Stmt.Visitor<Void>{
     @Override
     public Void visitWhileStmt(Stmt.While stmt) {
         resolve(stmt.condition);
+        LoopType enclosingFunction = currentLoop; // 进入了loop里面
+        currentLoop = LoopType.LOOP;
         resolve(stmt.body);
+        currentLoop = enclosingFunction;
         return null;
     }
 }
