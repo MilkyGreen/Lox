@@ -2,3 +2,4 @@
 /.idea/
 /craftinginterpreters-lox.iml
 /jlox/target/
+.vscode/settings.json
