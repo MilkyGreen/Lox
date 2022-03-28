@@ -3,3 +3,5 @@
 /craftinginterpreters-lox.iml
 /jlox/target/
 .vscode/settings.json
+.vscode/c_cpp_properties.json
+clox/main
