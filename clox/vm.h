@@ -20,10 +20,10 @@ typedef enum {
 } InterpretResult;
 
 void initVM();
+
+InterpretResult interpret(const char* source);
+
 void freeVM();
-
-InterpretResult interpret(Chunk* chunk);
-
 /**
  * @brief 栈中放入值
  * 

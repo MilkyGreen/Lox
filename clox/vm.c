@@ -1,6 +1,7 @@
 #include "vm.h"
 #include <stdio.h>
 #include "common.h"
+#include "compiler.h"
 #include "debug.h"
 
 // 虚拟机对象
@@ -100,11 +101,9 @@ static InterpretResult run() {
 /**
  * @brief 解释执行代码
  *
- * @param chunk
  * @return InterpretResult
  */
-InterpretResult interpret(Chunk* chunk) {
-    vm.chunk = chunk;
-    vm.ip = vm.chunk->code;  // 下个待执行的指令指针，是code的位置
-    return run();
+InterpretResult interpret(const char* source) {
+  compile(source);
+  return INTERPRET_OK;
 }
