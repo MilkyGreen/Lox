@@ -12,19 +12,10 @@ typedef struct {
     Token current;   // 当前的token
     Token previous;  // 上一个token
     bool hadError;   // 是否遇到了错误
-    bool
-        panicMode;  // 是否处于panic模式（遇到语法错误，直到一个语句结束会推出panic模式，忽略中间的错误）
+    bool panicMode;  // 是否处于panic模式（遇到语法错误，直到一个语句结束会推出panic模式，忽略中间的错误）
 } Parser;
 
 typedef void (*ParseFn)();
-
-typedef struct {
-    ParseFn prefix;
-    ParseFn infix;
-    Precedence precedence;
-} ParseRule;
-
-Parser parser;
 
 typedef enum {
     PREC_NONE,
@@ -39,6 +30,16 @@ typedef enum {
     PREC_CALL,        // . ()
     PREC_PRIMARY
 } Precedence;
+
+typedef struct {
+    ParseFn prefix;
+    ParseFn infix;
+    Precedence precedence;
+} ParseRule;
+
+Parser parser;
+
+
 
 // 正在编译中的chunk
 Chunk* compilingChunk;
@@ -258,7 +259,7 @@ ParseRule rules[] = {
 // partt parser
 // 1 + 2 * 3  首先遇到1，按数字解析，放入chunk。后面遇到更大优先级的+，继续获取+的中缀方法binary，执行binary，
 // 看看后面是否有更高优先级的token，有的话放入chunk，最后放入自己的操作符。
-// chunk里的元素应该是: 1 2 3 * + 。 放入栈中的之后的顺序是：+ * 3 2 1, 计算是先取 + ，然后取* 取出2和3，相乘放6进入栈，再取6和1，相加
+// chunk里的元素应该是: 1 2 3 * + 。 放入栈中的之后的顺序是：3 2 1, 计算是先取 + ，然后取* 取出2和3，相乘放6进入栈，再取6和1，相加
 static void parsePrecedence(Precedence precedence) {
     advance();  // 前进一个token
     // 获取上个一个(当前操作的)token的前缀parse方法。任何一个token只少属于一个前缀表达式
