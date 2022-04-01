@@ -9,7 +9,7 @@ VM vm;
 
 /**
  * @brief 重置栈。把栈顶移向数组头部，相当于清空栈
- * 
+ *
  */
 static void resetStack() {
     vm.stackTop = vm.stack;
@@ -22,18 +22,20 @@ void initVM() {
 void freeVM() {}
 
 void push(Value value) {
-    *vm.stackTop = value; // 栈顶指针位置的值置为value
-    vm.stackTop++; // 栈顶指针向后移动一位
+    *vm.stackTop = value;  // 栈顶指针位置的值置为value
+    vm.stackTop++;         // 栈顶指针向后移动一位
 }
 
 Value pop() {
-    vm.stackTop--; // 指针回一位
-    return *vm.stackTop; // 获取值
+    vm.stackTop--;        // 指针回一位
+    return *vm.stackTop;  // 获取值
 }
 
 static InterpretResult run() {
 #define READ_BYTE() (*vm.ip++)  // 宏定义：读取一个指令，ip++
-#define READ_CONSTANT()   (vm.chunk->constants.values[READ_BYTE()])  // READ_BYTE()获取常量在数组中的索引，再从常量池中读取常量
+#define READ_CONSTANT()         \
+    (vm.chunk->constants.values \
+         [READ_BYTE()])  // READ_BYTE()获取常量在数组中的索引，再从常量池中读取常量
 
 // 二元操作的宏。先出栈两个元素，再执行op。
 // 定义为do while 是为了方便后面加分号
@@ -71,7 +73,7 @@ static InterpretResult run() {
                 push(constant);
                 break;
             }
-            case OP_ADD:    // 利用宏展开来执行二元操作
+            case OP_ADD:  // 利用宏展开来执行二元操作
                 BINARY_OP(+);
                 break;
             case OP_SUBTRACT:
@@ -104,6 +106,19 @@ static InterpretResult run() {
  * @return InterpretResult
  */
 InterpretResult interpret(const char* source) {
-  compile(source);
-  return INTERPRET_OK;
+    Chunk chunk;
+    initChunk(&chunk);
+
+    if (!compile(source, &chunk)) {
+        freeChunk(&chunk);
+        return INTERPRET_COMPILE_ERROR;
+    }
+
+    vm.chunk = &chunk;
+    vm.ip = vm.chunk->code;
+
+    InterpretResult result = run();
+
+    freeChunk(&chunk);
+    return result;
 }
