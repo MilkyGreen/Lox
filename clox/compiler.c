@@ -12,9 +12,11 @@ typedef struct {
     Token current;   // 当前的token
     Token previous;  // 上一个token
     bool hadError;   // 是否遇到了错误
-    bool panicMode;  // 是否处于panic模式（遇到语法错误，直到一个语句结束会推出panic模式，忽略中间的错误）
+    // 是否处于panic模式（遇到语法错误，直到一个语句结束会推出panic模式，忽略中间的错误）
+    bool panicMode;  
 } Parser;
 
+// 定义一个函数类型 ParseFn ，代表一个token对应的前缀或中缀parser函数
 typedef void (*ParseFn)();
 
 typedef enum {
@@ -31,6 +33,7 @@ typedef enum {
     PREC_PRIMARY
 } Precedence;
 
+// ParseRule代表一种token对应的前缀、中缀parser函数和优先级
 typedef struct {
     ParseFn prefix;
     ParseFn infix;
@@ -38,8 +41,6 @@ typedef struct {
 } ParseRule;
 
 Parser parser;
-
-
 
 // 正在编译中的chunk
 Chunk* compilingChunk;
@@ -166,6 +167,24 @@ static void binary() {
     parsePrecedence((Precedence)(rule->precedence + 1));
 
     switch (operatorType) {
+        case TOKEN_BANG_EQUAL:  // != 
+            emitBytes(OP_EQUAL, OP_NOT); // 不等没有定义专门的OP指令，可以用 = ! 来操作
+            break;
+        case TOKEN_EQUAL_EQUAL:
+            emitByte(OP_EQUAL);
+            break;
+        case TOKEN_GREATER:
+            emitByte(OP_GREATER);
+            break;
+        case TOKEN_GREATER_EQUAL: // >= 
+            emitBytes(OP_LESS, OP_NOT); // >= 使用 !< 操作
+            break;
+        case TOKEN_LESS:
+            emitByte(OP_LESS);
+            break;
+        case TOKEN_LESS_EQUAL:
+            emitBytes(OP_GREATER, OP_NOT); // <= 使用 !> 操作
+            break;
         case TOKEN_PLUS:
             emitByte(OP_ADD);
             break;
@@ -183,6 +202,26 @@ static void binary() {
     }
 }
 
+/**
+ * @brief 解析字面量token，放入chunk
+ * 
+ */
+static void literal() {
+    switch (parser.previous.type) {
+        case TOKEN_FALSE:
+            emitByte(OP_FALSE);
+            break;
+        case TOKEN_NIL:
+            emitByte(OP_NIL);
+            break;
+        case TOKEN_TRUE:
+            emitByte(OP_TRUE);
+            break;
+        default:
+            return;  // Unreachable.
+    }
+}
+
 // 处理括号
 static void grouping() {
     expression();
@@ -192,7 +231,7 @@ static void grouping() {
 // 处理一个数字类型token
 static void number() {
     double value = strtod(parser.previous.start, NULL);
-    emitConstant(value);
+    emitConstant(NUMBER_VAL(value));
 }
 
 // 处理一元操作
@@ -204,6 +243,9 @@ static void unary() {
 
     // Emit the operator instruction.
     switch (operatorType) {
+        case TOKEN_BANG:
+            emitByte(OP_NOT);
+            break;
         case TOKEN_MINUS:
             emitByte(OP_NEGATE);
             break;
@@ -225,31 +267,31 @@ ParseRule rules[] = {
     [TOKEN_SEMICOLON] = {NULL, NULL, PREC_NONE},
     [TOKEN_SLASH] = {NULL, binary, PREC_FACTOR},
     [TOKEN_STAR] = {NULL, binary, PREC_FACTOR},
-    [TOKEN_BANG] = {NULL, NULL, PREC_NONE},
-    [TOKEN_BANG_EQUAL] = {NULL, NULL, PREC_NONE},
+    [TOKEN_BANG] = {unary, NULL, PREC_NONE},
+    [TOKEN_BANG_EQUAL] = {NULL, binary, PREC_EQUALITY},
     [TOKEN_EQUAL] = {NULL, NULL, PREC_NONE},
-    [TOKEN_EQUAL_EQUAL] = {NULL, NULL, PREC_NONE},
-    [TOKEN_GREATER] = {NULL, NULL, PREC_NONE},
-    [TOKEN_GREATER_EQUAL] = {NULL, NULL, PREC_NONE},
-    [TOKEN_LESS] = {NULL, NULL, PREC_NONE},
-    [TOKEN_LESS_EQUAL] = {NULL, NULL, PREC_NONE},
+    [TOKEN_EQUAL_EQUAL] = {NULL, binary, PREC_EQUALITY},
+    [TOKEN_GREATER] = {NULL, binary, PREC_COMPARISON},
+    [TOKEN_GREATER_EQUAL] = {NULL, binary, PREC_COMPARISON},
+    [TOKEN_LESS] = {NULL, binary, PREC_COMPARISON},
+    [TOKEN_LESS_EQUAL] = {NULL, binary, PREC_COMPARISON},
     [TOKEN_IDENTIFIER] = {NULL, NULL, PREC_NONE},
     [TOKEN_STRING] = {NULL, NULL, PREC_NONE},
     [TOKEN_NUMBER] = {number, NULL, PREC_NONE},
     [TOKEN_AND] = {NULL, NULL, PREC_NONE},
     [TOKEN_CLASS] = {NULL, NULL, PREC_NONE},
     [TOKEN_ELSE] = {NULL, NULL, PREC_NONE},
-    [TOKEN_FALSE] = {NULL, NULL, PREC_NONE},
+    [TOKEN_FALSE] = {literal, NULL, PREC_NONE},
     [TOKEN_FOR] = {NULL, NULL, PREC_NONE},
     [TOKEN_FUN] = {NULL, NULL, PREC_NONE},
     [TOKEN_IF] = {NULL, NULL, PREC_NONE},
-    [TOKEN_NIL] = {NULL, NULL, PREC_NONE},
+    [TOKEN_NIL] = {literal, NULL, PREC_NONE},
     [TOKEN_OR] = {NULL, NULL, PREC_NONE},
     [TOKEN_PRINT] = {NULL, NULL, PREC_NONE},
     [TOKEN_RETURN] = {NULL, NULL, PREC_NONE},
     [TOKEN_SUPER] = {NULL, NULL, PREC_NONE},
     [TOKEN_THIS] = {NULL, NULL, PREC_NONE},
-    [TOKEN_TRUE] = {NULL, NULL, PREC_NONE},
+    [TOKEN_TRUE] = {literal, NULL, PREC_NONE},
     [TOKEN_VAR] = {NULL, NULL, PREC_NONE},
     [TOKEN_WHILE] = {NULL, NULL, PREC_NONE},
     [TOKEN_ERROR] = {NULL, NULL, PREC_NONE},
@@ -257,9 +299,11 @@ ParseRule rules[] = {
 };
 
 // partt parser
-// 1 + 2 * 3  首先遇到1，按数字解析，放入chunk。后面遇到更大优先级的+，继续获取+的中缀方法binary，执行binary，
+// 1 + 2 * 3
+// 首先遇到1，按数字解析，放入chunk。后面遇到更大优先级的+，继续获取+的中缀方法binary，执行binary，
 // 看看后面是否有更高优先级的token，有的话放入chunk，最后放入自己的操作符。
-// chunk里的元素应该是: 1 2 3 * + 。 放入栈中的之后的顺序是：3 2 1, 计算是先取 + ，然后取* 取出2和3，相乘放6进入栈，再取6和1，相加
+// chunk里的元素应该是: 1 2 3 * + 。 放入栈中的之后的顺序是：3 2 1, 计算是先取 +
+// ，然后取* 取出2和3，相乘放6进入栈，再取6和1，相加
 static void parsePrecedence(Precedence precedence) {
     advance();  // 前进一个token
     // 获取上个一个(当前操作的)token的前缀parse方法。任何一个token只少属于一个前缀表达式
@@ -273,7 +317,7 @@ static void parsePrecedence(Precedence precedence) {
 
     // 后面一个token如果优先级更高，则和前面处理过的那些token共同组成一个中缀表达式
     while (precedence <= getRule(parser.current.type)->precedence) {
-        advance(); // 消费一个token
+        advance();  // 消费一个token
         // 获取中缀解析方法
         ParseFn infixRule = getRule(parser.previous.type)->infix;
         // 执行中缀解析

@@ -5,3 +5,9 @@
 .vscode/settings.json
 .vscode/c_cpp_properties.json
 clox/main
+clox/compiler.dSYM/Contents/Info.plist
+clox/compiler.dSYM/Contents/Resources/DWARF/compiler
+clox/test.dSYM/Contents/Info.plist
+clox/test.dSYM/Contents/Resources/DWARF/test
+clox/vm.dSYM/Contents/Info.plist
+clox/vm.dSYM/Contents/Resources/DWARF/vm

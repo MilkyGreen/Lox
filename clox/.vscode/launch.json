@@ -9,7 +9,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${fileDirname}/${fileBasenameNoExtension}",
-            "args": [],
+            "args": ["/Users/edz/Desktop/projects/private/craftinginterpreters-lox/clox/test.lox"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],

@@ -6,13 +6,20 @@
 
 // 指令枚举
 typedef enum {
-    OP_CONSTANT, // 常量
-    OP_ADD, // 加法操作
-    OP_SUBTRACT, // 减法
-    OP_MULTIPLY, // 乘法
-    OP_DIVIDE, // 除法
-    OP_NEGATE, // 负号
-    OP_RETURN, // 返回
+    OP_CONSTANT,  // 常量
+    OP_NIL, // 空值
+    OP_TRUE, // true
+    OP_FALSE,  // false
+    OP_EQUAL, //  =
+    OP_GREATER, // >
+    OP_LESS, // <
+    OP_ADD,       // 加法操作
+    OP_SUBTRACT,  // 减法
+    OP_MULTIPLY,  // 乘法
+    OP_DIVIDE,    // 除法
+    OP_NOT, // !
+    OP_NEGATE,  // 负号
+    OP_RETURN,  // 返回
 } OpCode;
 
 // 代表串指令
