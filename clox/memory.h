@@ -2,6 +2,13 @@
 #define clox_memory_h
 
 #include "common.h"
+#include "object.h"
+
+#define ALLOCATE(type, count) \
+    (type*)reallocate(NULL, 0, sizeof(type) * (count))
+
+// 根据type释放pointer对象的内存
+#define FREE(type, pointer) reallocate(pointer, sizeof(type), 0)
 
 /**
  * @brief capacity扩容
@@ -34,5 +41,7 @@
  * @return void* 新指针。 tip: void * 代表无类型指针，它仅仅指向一个内存地址，并不知道这个地址存的什么类型数据。void * 可以转换为其他类型的指针，如int* ，但是之后就不能再转换了。
  */
 void *reallocate(void *pointer, size_t oldSize, size_t newSize);
+
+void freeObjects();
 
 #endif

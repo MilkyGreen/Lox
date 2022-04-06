@@ -13,7 +13,7 @@ typedef struct {
     Token previous;  // 上一个token
     bool hadError;   // 是否遇到了错误
     // 是否处于panic模式（遇到语法错误，直到一个语句结束会推出panic模式，忽略中间的错误）
-    bool panicMode;  
+    bool panicMode;
 } Parser;
 
 // 定义一个函数类型 ParseFn ，代表一个token对应的前缀或中缀parser函数
@@ -167,8 +167,9 @@ static void binary() {
     parsePrecedence((Precedence)(rule->precedence + 1));
 
     switch (operatorType) {
-        case TOKEN_BANG_EQUAL:  // != 
-            emitBytes(OP_EQUAL, OP_NOT); // 不等没有定义专门的OP指令，可以用 = ! 来操作
+        case TOKEN_BANG_EQUAL:  // !=
+            emitBytes(OP_EQUAL,
+                      OP_NOT);  // 不等没有定义专门的OP指令，可以用 = ! 来操作
             break;
         case TOKEN_EQUAL_EQUAL:
             emitByte(OP_EQUAL);
@@ -176,14 +177,14 @@ static void binary() {
         case TOKEN_GREATER:
             emitByte(OP_GREATER);
             break;
-        case TOKEN_GREATER_EQUAL: // >= 
-            emitBytes(OP_LESS, OP_NOT); // >= 使用 !< 操作
+        case TOKEN_GREATER_EQUAL:        // >=
+            emitBytes(OP_LESS, OP_NOT);  // >= 使用 !< 操作
             break;
         case TOKEN_LESS:
             emitByte(OP_LESS);
             break;
         case TOKEN_LESS_EQUAL:
-            emitBytes(OP_GREATER, OP_NOT); // <= 使用 !> 操作
+            emitBytes(OP_GREATER, OP_NOT);  // <= 使用 !> 操作
             break;
         case TOKEN_PLUS:
             emitByte(OP_ADD);
@@ -204,7 +205,7 @@ static void binary() {
 
 /**
  * @brief 解析字面量token，放入chunk
- * 
+ *
  */
 static void literal() {
     switch (parser.previous.type) {
@@ -232,6 +233,13 @@ static void grouping() {
 static void number() {
     double value = strtod(parser.previous.start, NULL);
     emitConstant(NUMBER_VAL(value));
+}
+
+// 处理一个String类型的token
+static void string() {
+    // 从源码字符串拷贝一份，生成字符串对象
+  emitConstant(OBJ_VAL(copyString(parser.previous.start + 1,
+                                  parser.previous.length - 2)));
 }
 
 // 处理一元操作
@@ -276,7 +284,7 @@ ParseRule rules[] = {
     [TOKEN_LESS] = {NULL, binary, PREC_COMPARISON},
     [TOKEN_LESS_EQUAL] = {NULL, binary, PREC_COMPARISON},
     [TOKEN_IDENTIFIER] = {NULL, NULL, PREC_NONE},
-    [TOKEN_STRING] = {NULL, NULL, PREC_NONE},
+    [TOKEN_STRING] = {string, NULL, PREC_NONE},
     [TOKEN_NUMBER] = {number, NULL, PREC_NONE},
     [TOKEN_AND] = {NULL, NULL, PREC_NONE},
     [TOKEN_CLASS] = {NULL, NULL, PREC_NONE},

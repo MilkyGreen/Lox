@@ -3,11 +3,16 @@
 
 #include "common.h"
 
+typedef struct Obj Obj;
+
+typedef struct ObjString ObjString;
+
 // value的类型枚举
 typedef enum {
   VAL_BOOL,
   VAL_NIL, 
   VAL_NUMBER,
+  VAL_OBJ
 } ValueType;
 
 // Value代表lox中的一个值
@@ -16,6 +21,7 @@ typedef struct {
   union {
     bool boolean;
     double number;
+    Obj* obj;
   } as;  // 真实的值，使用union类型节省空间，union中的字段一次只会使用一个。
 } Value;
 
@@ -23,8 +29,10 @@ typedef struct {
 #define IS_BOOL(value)    ((value).type == VAL_BOOL)
 #define IS_NIL(value)     ((value).type == VAL_NIL)
 #define IS_NUMBER(value)  ((value).type == VAL_NUMBER)
+#define IS_OBJ(value)     ((value).type == VAL_OBJ)
 
 // 从Value中取真实的值
+#define AS_OBJ(value)     ((value).as.obj)
 #define AS_BOOL(value)    ((value).as.boolean)
 #define AS_NUMBER(value)  ((value).as.number)
 
@@ -32,6 +40,7 @@ typedef struct {
 #define BOOL_VAL(value)   ((Value){VAL_BOOL, {.boolean = value}})
 #define NIL_VAL           ((Value){VAL_NIL, {.number = 0}})
 #define NUMBER_VAL(value) ((Value){VAL_NUMBER, {.number = value}})
+#define OBJ_VAL(object)   ((Value){VAL_OBJ, {.obj = (Obj*)object}})
 
 // 定义值的动态数组
 typedef struct {

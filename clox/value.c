@@ -1,6 +1,8 @@
 #include <stdio.h>
+#include <string.h>
 
 #include "memory.h"
+#include "object.h"
 #include "value.h"
 
 void initValueArray(ValueArray* array) {
@@ -28,8 +30,8 @@ void freeValueArray(ValueArray* array) {
 
 /**
  * @brief 根据类型打印相应的值
- * 
- * @param value 
+ *
+ * @param value
  */
 void printValue(Value value) {
     switch (value.type) {
@@ -42,24 +44,38 @@ void printValue(Value value) {
         case VAL_NUMBER:
             printf("%g", AS_NUMBER(value));
             break;
+        case VAL_OBJ:
+            printObject(value);
+            break;
     }
 }
 
 /**
  * @brief 判断两个值是否相等
- * 
- * @param a 
- * @param b 
- * @return true 
- * @return false 
+ *
+ * @param a
+ * @param b
+ * @return true
+ * @return false
  */
 bool valuesEqual(Value a, Value b) {
-  // 先判断类型是否一致
-  if (a.type != b.type) return false;
-  switch (a.type) {
-    case VAL_BOOL:   return AS_BOOL(a) == AS_BOOL(b);
-    case VAL_NIL:    return true;
-    case VAL_NUMBER: return AS_NUMBER(a) == AS_NUMBER(b);
-    default:         return false; // Unreachable.
-  }
+    // 先判断类型是否一致
+    if (a.type != b.type)
+        return false;
+    switch (a.type) {
+        case VAL_BOOL:
+            return AS_BOOL(a) == AS_BOOL(b);
+        case VAL_NIL:
+            return true;
+        case VAL_NUMBER:
+            return AS_NUMBER(a) == AS_NUMBER(b);
+        case VAL_OBJ: {
+            ObjString* aString = AS_STRING(a);
+            ObjString* bString = AS_STRING(b);
+            return aString->length == bString->length &&
+                   memcmp(aString->chars, bString->chars, aString->length) == 0;
+        }
+        default:
+            return false;  // Unreachable.
+    }
 }

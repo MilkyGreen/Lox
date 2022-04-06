@@ -1,9 +1,13 @@
-#include "vm.h"
 #include <stdarg.h>
 #include <stdio.h>
+
+#include <string.h>
 #include "common.h"
 #include "compiler.h"
 #include "debug.h"
+#include "memory.h"
+#include "object.h"
+#include "vm.h"
 
 // 虚拟机对象
 VM vm;
@@ -18,9 +22,9 @@ static void resetStack() {
 
 /**
  * @brief 处理运行异常
- * 
+ *
  * @param format 错误信息
- * @param ... 
+ * @param ...
  */
 static void runtimeError(const char* format, ...) {
     va_list args;
@@ -38,10 +42,14 @@ static void runtimeError(const char* format, ...) {
 }
 
 void initVM() {
+    vm.objects = NULL;
     resetStack();
 }
 
-void freeVM() {}
+void freeVM() {
+    // 释放所有对象占用的内存
+    freeObjects();
+}
 
 void push(Value value) {
     *vm.stackTop = value;  // 栈顶指针位置的值置为value
@@ -61,6 +69,24 @@ static Value peek(int distance) {
 
 static bool isFalsey(Value value) {
     return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
+}
+
+// 字符串连接操作
+static void concatenate() {
+    // 先取出两个字符串对象
+    ObjString* b = AS_STRING(pop());
+    ObjString* a = AS_STRING(pop());
+    // 计算新的长度
+    int length = a->length + b->length;
+    // 开辟新的字符数组空间
+    char* chars = ALLOCATE(char, length + 1);
+    // 依次将两个字符串拷贝到新字符串
+    memcpy(chars, a->chars, a->length);
+    memcpy(chars + a->length, b->chars, b->length);
+    chars[length] = '\0';
+    // 用新字符串生成ObjString
+    ObjString* result = takeString(chars, length);
+    push(OBJ_VAL(result));
 }
 
 static InterpretResult run() {
@@ -130,38 +156,50 @@ static InterpretResult run() {
             case OP_LESS:
                 BINARY_OP(BOOL_VAL, <);
                 break;
-            case OP_ADD:
-                BINARY_OP(NUMBER_VAL, +);
-                break;
-            case OP_SUBTRACT:
-                BINARY_OP(NUMBER_VAL, -);
-                break;
-            case OP_MULTIPLY:
-                BINARY_OP(NUMBER_VAL, *);
-                break;
-            case OP_DIVIDE:
-                BINARY_OP(NUMBER_VAL, /);
-                break;
-            case OP_NOT:
-                push(BOOL_VAL(isFalsey(pop())));
-                break;
-            case OP_NEGATE:
-                if (!IS_NUMBER(peek(0))) {
-                    runtimeError("Operand must be a number.");
+            case OP_ADD: {
+                if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
+                    // 字符串相加
+                    concatenate();
+                } else if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1))) {
+                    double b = AS_NUMBER(pop());
+                    double a = AS_NUMBER(pop());
+                    push(NUMBER_VAL(a + b));
+                } else {
+                    runtimeError(
+                        "Operands must be two numbers or two strings.");
                     return INTERPRET_RUNTIME_ERROR;
                 }
-                push(NUMBER_VAL(-AS_NUMBER(pop())));
                 break;
-            case OP_RETURN: {
-                printValue(pop());
-                printf("\n");
-                return INTERPRET_OK;
+                case OP_SUBTRACT:
+                    BINARY_OP(NUMBER_VAL, -);
+                    break;
+                case OP_MULTIPLY:
+                    BINARY_OP(NUMBER_VAL, *);
+                    break;
+                case OP_DIVIDE:
+                    BINARY_OP(NUMBER_VAL, /);
+                    break;
+                case OP_NOT:
+                    push(BOOL_VAL(isFalsey(pop())));
+                    break;
+                case OP_NEGATE:
+                    if (!IS_NUMBER(peek(0))) {
+                        runtimeError("Operand must be a number.");
+                        return INTERPRET_RUNTIME_ERROR;
+                    }
+                    push(NUMBER_VAL(-AS_NUMBER(pop())));
+                    break;
+                case OP_RETURN: {
+                    printValue(pop());
+                    printf("\n");
+                    return INTERPRET_OK;
+                }
             }
         }
-    }
 #undef READ_BYTE
 #undef READ_CONSTANT
 #undef BINARY_OP
+    }
 }
 
 /**
