@@ -29,6 +29,7 @@ struct ObjString {
   Obj obj; // 第一个字段是Obj类型，这样 *ObjString 可以直接转成 *Obj，相当于继承的功能
   int length; // 字符串的长度
   char* chars; // 开始字符的引用
+  uint32_t hash; // 字符串hash值
 };
 
 // 根据字符引用和长度，生成一个ObjString

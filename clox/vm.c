@@ -43,10 +43,12 @@ static void runtimeError(const char* format, ...) {
 
 void initVM() {
     vm.objects = NULL;
+    initTable(&vm.strings); // 初始化字符串缓存哈希表
     resetStack();
 }
 
 void freeVM() {
+    freeTable(&vm.strings);
     // 释放所有对象占用的内存
     freeObjects();
 }

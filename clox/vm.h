@@ -2,6 +2,7 @@
 #define clox_vm_h
 
 #include "chunk.h"
+#include "table.h"
 #include "value.h"
 #define STACK_MAX 256
 
@@ -11,6 +12,7 @@ typedef struct {
     uint8_t* ip;   // 下一个要执行的指令指针
     Value stack[STACK_MAX]; // 操作栈
     Value* stackTop; // 栈顶元素（下一个空位置）
+    Table strings; // 字符串缓存哈希表。相同的字符串会使用同一个对象
     Obj* objects; // Obj链表，保存VM中所有的Obj对象引用，VM退出的时候释放掉这些内存
 } VM;
 
