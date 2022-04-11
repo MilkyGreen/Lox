@@ -8,12 +8,14 @@
 
 // 虚拟机对象
 typedef struct {
-    Chunk* chunk;  // 包含的chunk
-    uint8_t* ip;   // 下一个要执行的指令指针
-    Value stack[STACK_MAX]; // 操作栈
-    Value* stackTop; // 栈顶元素（下一个空位置）
-    Table strings; // 字符串缓存哈希表。相同的字符串会使用同一个对象
-    Obj* objects; // Obj链表，保存VM中所有的Obj对象引用，VM退出的时候释放掉这些内存
+    Chunk* chunk;            // 包含的chunk
+    uint8_t* ip;             // 下一个要执行的指令指针
+    Value stack[STACK_MAX];  // 操作栈
+    Value* stackTop;         // 栈顶元素（下一个空位置）
+    Table strings;  // 字符串缓存哈希表。相同的字符串会使用同一个对象
+    Table globals; // 全局变量
+    Obj*
+        objects;  // Obj链表，保存VM中所有的Obj对象引用，VM退出的时候释放掉这些内存
 } VM;
 
 typedef enum {
@@ -31,8 +33,8 @@ InterpretResult interpret(const char* source);
 void freeVM();
 /**
  * @brief 栈中放入值
- * 
- * @param value 
+ *
+ * @param value
  */
 void push(Value value);
 Value pop();

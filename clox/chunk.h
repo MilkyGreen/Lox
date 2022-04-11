@@ -10,6 +10,10 @@ typedef enum {
     OP_NIL, // 空值
     OP_TRUE, // true
     OP_FALSE,  // false
+    OP_POP, // 从栈中取值
+    OP_GET_GLOBAL, // 全局变量获取
+    OP_DEFINE_GLOBAL, // 全局变量定义
+    OP_SET_GLOBAL, // 全局变量设置
     OP_EQUAL, //  =
     OP_GREATER, // >
     OP_LESS, // <
@@ -19,6 +23,7 @@ typedef enum {
     OP_DIVIDE,    // 除法
     OP_NOT, // !
     OP_NEGATE,  // 负号
+    OP_PRINT, // 打印
     OP_RETURN,  // 返回
 } OpCode;
 

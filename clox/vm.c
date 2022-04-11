@@ -43,11 +43,13 @@ static void runtimeError(const char* format, ...) {
 
 void initVM() {
     vm.objects = NULL;
-    initTable(&vm.strings); // 初始化字符串缓存哈希表
+    initTable(&vm.globals);
+    initTable(&vm.strings);  // 初始化字符串缓存哈希表
     resetStack();
 }
 
 void freeVM() {
+    freeTable(&vm.globals);
     freeTable(&vm.strings);
     // 释放所有对象占用的内存
     freeObjects();
@@ -96,6 +98,8 @@ static InterpretResult run() {
 #define READ_CONSTANT()         \
     (vm.chunk->constants.values \
          [READ_BYTE()])  // READ_BYTE()获取常量在数组中的索引，再从常量池中读取常量
+
+#define READ_STRING() AS_STRING(READ_CONSTANT())
 
 // 二元操作的宏。先出栈两个元素，再执行op。
 // 定义为do while 是为了方便后面加分号
@@ -146,6 +150,43 @@ static InterpretResult run() {
             case OP_FALSE:
                 push(BOOL_VAL(false));
                 break;
+            case OP_POP:
+                pop();
+                break;
+            case OP_GET_GLOBAL: {
+                // 获取变量名
+                ObjString* name = READ_STRING();
+                Value value;
+                // 如果是没取到值，报错
+                if (!tableGet(&vm.globals, name, &value)) {
+                    runtimeError("Undefined variable '%s'.", name->chars);
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                // 把值放到栈中
+                push(value);
+                break;
+            }
+            case OP_DEFINE_GLOBAL: {
+                // 获取变量名称
+                ObjString* name = READ_STRING();
+                // 将变量放入全局变量集合
+                tableSet(&vm.globals, name, peek(0));
+                // 把变量的value pop()出来，后面会通过变量名从全局变量中获取
+                pop();
+                break;
+            }
+            case OP_SET_GLOBAL: {
+                // 读取变量名
+                ObjString* name = READ_STRING();
+                // 试图赋值，如果是第一次赋值，说名变量还没定义过，需要报错
+                if (tableSet(&vm.globals, name, peek(0))) {
+                    tableDelete(&vm.globals, name);
+                    runtimeError("Undefined variable '%s'.", name->chars);
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                // 赋值不对栈产生任何影响。栈里的值会在expressionStatement() 加的POP指令被pop出来
+                break;
+            }
             case OP_EQUAL: {
                 Value b = pop();
                 Value a = pop();
@@ -191,15 +232,21 @@ static InterpretResult run() {
                     }
                     push(NUMBER_VAL(-AS_NUMBER(pop())));
                     break;
-                case OP_RETURN: {
+                case OP_PRINT: {
                     printValue(pop());
                     printf("\n");
+                    break;
+                }
+                case OP_RETURN: {
+                    // printValue(pop());
+                    // printf("\n");
                     return INTERPRET_OK;
                 }
             }
         }
 #undef READ_BYTE
 #undef READ_CONSTANT
+#undef READ_STRING
 #undef BINARY_OP
     }
 }
