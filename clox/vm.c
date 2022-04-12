@@ -153,6 +153,20 @@ static InterpretResult run() {
             case OP_POP:
                 pop();
                 break;
+            case OP_GET_LOCAL: {
+                // 本地变量取值，下一个指令就是本地变量值在栈中的索引
+                uint8_t slot = READ_BYTE();
+                // 将值push进栈
+                push(vm.stack[slot]);
+                break;
+            }
+            case OP_SET_LOCAL: {
+                // 本地变量赋值，下一个指令就是本地变量值在栈中的索引
+                uint8_t slot = READ_BYTE();
+                // 将索引位置的值修改。这里用peek是因为表达式后面统一都跟了一个pop，会统一把值弹出，清空栈。
+                vm.stack[slot] = peek(0);
+                break;
+            }
             case OP_GET_GLOBAL: {
                 // 获取变量名
                 ObjString* name = READ_STRING();
@@ -184,7 +198,8 @@ static InterpretResult run() {
                     runtimeError("Undefined variable '%s'.", name->chars);
                     return INTERPRET_RUNTIME_ERROR;
                 }
-                // 赋值不对栈产生任何影响。栈里的值会在expressionStatement() 加的POP指令被pop出来
+                // 赋值不对栈产生任何影响。栈里的值会在expressionStatement()
+                // 加的POP指令被pop出来
                 break;
             }
             case OP_EQUAL: {

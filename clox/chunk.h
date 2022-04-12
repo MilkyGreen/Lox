@@ -11,6 +11,8 @@ typedef enum {
     OP_TRUE, // true
     OP_FALSE,  // false
     OP_POP, // 从栈中取值
+    OP_GET_LOCAL, 
+    OP_SET_LOCAL,
     OP_GET_GLOBAL, // 全局变量获取
     OP_DEFINE_GLOBAL, // 全局变量定义
     OP_SET_GLOBAL, // 全局变量设置

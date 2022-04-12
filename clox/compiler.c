@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "common.h"
 #include "compiler.h"
@@ -18,7 +19,7 @@ typedef struct {
 
 /**
  * @brief 定义一个函数类型 ParseFn ，代表一个token对应的前缀或中缀parser函数
- * 
+ *
  */
 typedef void (*ParseFn)(bool canAssign);
 
@@ -43,7 +44,23 @@ typedef struct {
     Precedence precedence;
 } ParseRule;
 
+// 本地变量
+typedef struct {
+    Token name;  // 变量token名称
+    int depth;   // 作用域深度。0代表全局变量
+} Local;
+
+// 正在执行的Compiler记录本地变量
+typedef struct {
+    Local locals[UINT8_COUNT];  // 本地变量列表
+    int localCount;             // 本地变量数量
+    int scopeDepth;             // 作用域深度
+} Compiler;
+
 Parser parser;
+
+// 当前Compiler对象引用
+Compiler* current = NULL;
 
 // 正在编译中的chunk
 Chunk* compilingChunk;
@@ -160,6 +177,13 @@ static void emitConstant(Value value) {
     emitBytes(OP_CONSTANT, makeConstant(value));
 }
 
+// 初始化Compiler
+static void initCompiler(Compiler* compiler) {
+    compiler->localCount = 0;
+    compiler->scopeDepth = 0;
+    current = compiler;
+}
+
 // 结束编译
 static void endCompiler() {
     emitReturn();
@@ -170,6 +194,26 @@ static void endCompiler() {
 #endif
 }
 
+// 开启一个block
+static void beginScope() {
+    // 当前的作用域深度+1
+    current->scopeDepth++;
+}
+
+// 结束一个block
+static void endScope() {
+    // 作用域 -1
+    current->scopeDepth--;
+
+    // 作用域结束后，该作用域里面的本地变量需要从运行栈中清除 POP
+    while (current->localCount > 0 &&
+           current->locals[current->localCount - 1].depth >
+               current->scopeDepth) {
+        emitByte(OP_POP);
+        current->localCount--;
+    }
+}
+
 // 因为递归调用顺序的问题，这些函数提前定义
 static void expression();
 static void statement();
@@ -178,6 +222,64 @@ static ParseRule* getRule(TokenType type);
 static void parsePrecedence(Precedence precedence);
 static uint8_t identifierConstant(Token* name) {
     return makeConstant(OBJ_VAL(copyString(name->start, name->length)));
+}
+
+// 判断两个token是否同名
+static bool identifiersEqual(Token* a, Token* b) {
+    if (a->length != b->length)
+        return false;
+    return memcmp(a->start, b->start, a->length) == 0;
+}
+
+// 获取变量在compiler列表中的索引。从后往前找，即先找最近的作用域。
+// 这个索引在执行时就代表了变量值在栈中的索引，在运行时不再通过变量名称获取值，而是直接用这个索引在栈中取值
+static int resolveLocal(Compiler* compiler, Token* name) {
+    for (int i = compiler->localCount - 1; i >= 0; i--) {
+        Local* local = &compiler->locals[i];
+        if (identifiersEqual(name, &local->name)) {
+            if (local->depth == -1) {
+                error("Can't read local variable in its own initializer.");
+            }
+            return i;
+        }
+    }
+    return -1;
+}
+
+// 将本地变量加入到变量列表中
+static void addLocal(Token name) {
+    if (current->localCount == UINT8_COUNT) {
+        error("Too many local variables in function.");
+        return;
+    }
+    Local* local = &current->locals[current->localCount++];
+    local->name = name;
+    // 深度先设置为 -1，表明还未定义，只是先声明了一下。防止 var a = a + 1;
+    // 这种语法
+    local->depth = -1;
+}
+
+// 声明变量
+static void declareVariable() {
+    if (current->scopeDepth == 0) {
+        // 全局变量不处理
+        return;
+    }
+
+    Token* name = &parser.previous;
+    for (int i = current->localCount - 1; i >= 0; i--) {
+        // 检测相同作用域（depth相等）中是否有相同变量
+        Local* local = &current->locals[i];
+        if (local->depth != -1 && local->depth < current->scopeDepth) {
+            break;
+        }
+
+        if (identifiersEqual(name, &local->name)) {
+            error("Already a variable with this name in this scope.");
+        }
+    }
+    // 加入到本地变量列表中
+    addLocal(*name);
 }
 
 static void binary(bool canAssign) {
@@ -266,21 +368,37 @@ static void string(bool canAssign) {
 
 /**
  * @brief 处理变量token
- * 
+ *
  * @param name 变量名称
  * @param canAssign 当前的表达式中是否支持变量赋值（大部分不支持）
  */
 static void namedVariable(Token name, bool canAssign) {
     // 先获取变量名称的在常量池中的索引，作为指令。（为了保持执行栈的大小，不直接把变量名放入栈中）
-    uint8_t arg = identifierConstant(&name);
+    uint8_t getOp, setOp;
+    // 查看是否是本地变量
+    int arg = resolveLocal(current, &name);
+    if (arg != -1) {
+        // 本地变量，arg代表变量在本地变量数组中的索引，运行时会是变量值在栈中的索引。
+        // 比如，var a = 1 + 2;  a == 3 ;
+        // 指令列表是 1 2 + OP_GET_LOCAL 3 ==
+        // 执行到OP_GET_LOCAL的时候的栈：3 。这时stack[0]
+        // 就是当前scope中第一个变量的值，本地变量的名称甚至不用出现。
+        getOp = OP_GET_LOCAL;
+        setOp = OP_SET_LOCAL;
+    } else {
+        // 全局变量，arg是变量在常量池中的索引，运行时需要先获取变量名称，然后去全局变量哈希表中查找值
+        arg = identifierConstant(&name);
+        getOp = OP_GET_GLOBAL;
+        setOp = OP_SET_GLOBAL;
+    }
 
     if (canAssign && match(TOKEN_EQUAL)) {
-        // 如果可以赋值且后面跟等号，则需要解析后面变量值的表达式，然后放一个OP_SET_GLOBAL指令
+        // 如果可以赋值且后面跟等号，则需要解析后面变量值的表达式，然后放一个OP_SET指令
         expression();
-        emitBytes(OP_SET_GLOBAL, arg);
+        emitBytes(setOp, (uint8_t)arg);
     } else {
         // 不然就是一个变量获取
-        emitBytes(OP_GET_GLOBAL, arg);
+        emitBytes(getOp, (uint8_t)arg);
     }
 }
 
@@ -389,11 +507,29 @@ static void parsePrecedence(Precedence precedence) {
 // 定义变量名称，把字符串名称放入常量池，后面只使用常量池索引
 static uint8_t parseVariable(const char* errorMessage) {
     consume(TOKEN_IDENTIFIER, errorMessage);
+    // 变量声明，会将本地变量放入数组、校验是否有重名
+    declareVariable();
+    if (current->scopeDepth > 0) {
+        // 本地变量不用放入常量池
+        return 0;
+    }
+
     return identifierConstant(&parser.previous);
+}
+
+// 设置本地变量的深度
+static void markInitialized() {
+    current->locals[current->localCount - 1].depth = current->scopeDepth;
 }
 
 // 变量定义
 static void defineVariable(uint8_t global) {
+    if (current->scopeDepth > 0) {
+        // 本地变量的声明不往chunk里吗放任何值，它由变量的初始化表达式来直接表示。
+        // 如 var a = 1 + 2; 执行到这个表达式的时候，栈顶就是 3 ，这个就代表了变量a的值。后面用到变量a的时候来栈顶取就可以了。
+        markInitialized();
+        return;
+    }
     emitBytes(OP_DEFINE_GLOBAL, global);
 }
 
@@ -405,6 +541,14 @@ static ParseRule* getRule(TokenType type) {
 static void expression() {
     // 先从优先级最低的 = 操作开始
     parsePrecedence(PREC_ASSIGNMENT);
+}
+
+static void block() {
+    while (!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
+        declaration();
+    }
+
+    consume(TOKEN_RIGHT_BRACE, "Expect '}' after block.");
 }
 
 // 变量定义
@@ -419,7 +563,7 @@ static void varDeclaration() {
         emitByte(OP_NIL);
     }
     consume(TOKEN_SEMICOLON, "Expect ';' after variable declaration.");
-    // 定义变量指令到栈中
+    // 定义变量指令到chunk中
     defineVariable(global);
 }
 
@@ -427,7 +571,10 @@ static void varDeclaration() {
 static void expressionStatement() {
     expression();
     consume(TOKEN_SEMICOLON, "Expect ';' after expression.");
-    emitByte(OP_POP); // 表达式是逐行执行的，上一行的结果并不对下一行有影响。一个表达式执行完之后需要把结果pop。对后面代码的影响只能通过变量来做。
+    emitByte(OP_POP);  
+    // 表达式是逐行执行的，上一行的结果并不对下一行有影响。一个表达式一定会有一个结果值，执行完之后需要把结果pop，清空栈，为下一行执行做准备。
+    // 对后面代码的影响只能通过变量来做。
+    // 比如： 1+1; 执行完完之后会在栈里放一个2，但是下一个行是不需要这个2的，需要弹出。
 }
 
 // 打印 Statement
@@ -481,6 +628,11 @@ static void statement() {
     if (match(TOKEN_PRINT)) {
         // 打印statement
         printStatement();
+    } else if (match(TOKEN_LEFT_BRACE)) {
+        // 大括号开头表明遇到了一个block
+        beginScope();
+        block();
+        endScope();
     } else {
         expressionStatement();
     }
@@ -493,6 +645,8 @@ static void statement() {
  */
 bool compile(const char* source, Chunk* chunk) {
     initScanner(source);  // 先交给scanner进行token识别
+    Compiler compiler;
+    initCompiler(&compiler);
     compilingChunk = chunk;
     parser.hadError = false;
     parser.panicMode = false;
