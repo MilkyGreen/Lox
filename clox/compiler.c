@@ -157,6 +157,31 @@ static void emitBytes(uint8_t byte1, uint8_t byte2) {
     emitByte(byte1);
     emitByte(byte2);
 }
+
+// 设置循环指令和循环跳回的位置
+static void emitLoop(int loopStart) {
+    emitByte(OP_LOOP);
+
+    int offset = currentChunk()->count - loopStart + 2;
+    if (offset > UINT16_MAX)
+        error("Loop body too large.");
+
+    emitByte((offset >> 8) & 0xff);
+    emitByte(offset & 0xff);
+}
+
+// 写入跳转和跳转数量的指令
+static int emitJump(uint8_t instruction) {
+    // 跳转指令
+    emitByte(instruction);
+    // 后面用两个byte代表要跳转的步数，最多 0xffff
+    // 这里的步数只是先占位，具体多少要等到后面的代码编译完才知道。
+    emitByte(0xff);
+    emitByte(0xff);
+    // 返回跳转步数在数组中的索引，第一个占位数字的位置，后面会直接在这里赋值
+    return currentChunk()->count - 2;
+}
+
 // 写入一个return指令
 static void emitReturn() {
     emitByte(OP_RETURN);
@@ -175,6 +200,24 @@ static uint8_t makeConstant(Value value) {
 // 向chunk写入一个常量值
 static void emitConstant(Value value) {
     emitBytes(OP_CONSTANT, makeConstant(value));
+}
+
+// 设置之前的跳转占位符的步数
+// 此时要被跳过的代码已经被编译成了指令，跳过的步数即这些指令的数量
+static void patchJump(int offset) {
+    // 当前的指令数量减去被跳过代码编译前的指令数量，就是要被跳过的指令数。当然还要被两个占位符去掉，因为offset占位符的索引开始位置。
+    // jump就是要被跳过的指令数
+    int jump = currentChunk()->count - offset - 2;
+
+    if (jump > UINT16_MAX) {
+        error("Too much code to jump over.");
+    }
+
+    // 把指令数写入之前的两个占位符中。由于可能超过8bit，把它拆分成两部分。
+    // 先存高的8位，右移8位后低的8位会丢弃掉，跟 0xff（11111111）与操作
+    // 后8位的话直接跟0xff 与操作。因为0xff只有8位，高的8位自然会被丢弃
+    currentChunk()->code[offset] = (jump >> 8) & 0xff;
+    currentChunk()->code[offset + 1] = jump & 0xff;
 }
 
 // 初始化Compiler
@@ -359,6 +402,24 @@ static void number(bool canAssign) {
     emitConstant(NUMBER_VAL(value));
 }
 
+// or逻辑，任意一个true就可以跳过后面的条件
+// 所以一个有条件跳转之后加一个无条件跳转。
+// 先判断是否是false，有的话跳过无条件跳转指令，继续往后执行。
+// 如果有true则会执行到无条件跳转，跳过后面所有的条件。
+static void or_(bool canAssign) {
+    int elseJump = emitJump(OP_JUMP_IF_FALSE);
+    int endJump = emitJump(OP_JUMP);
+
+    // false时跳转的位置
+    patchJump(elseJump);
+    // 把前面的false pop出来，已经没用了。
+    emitByte(OP_POP);
+
+    parsePrecedence(PREC_OR);
+    // 设置结束跳转的位置
+    patchJump(endJump);
+}
+
 // 处理一个String类型的token
 static void string(bool canAssign) {
     // 从源码字符串拷贝一份，生成字符串对象
@@ -451,7 +512,7 @@ ParseRule rules[] = {
     [TOKEN_IDENTIFIER] = {variable, NULL, PREC_NONE},
     [TOKEN_STRING] = {string, NULL, PREC_NONE},
     [TOKEN_NUMBER] = {number, NULL, PREC_NONE},
-    [TOKEN_AND] = {NULL, NULL, PREC_NONE},
+    [TOKEN_AND] = {NULL, and_, PREC_AND},
     [TOKEN_CLASS] = {NULL, NULL, PREC_NONE},
     [TOKEN_ELSE] = {NULL, NULL, PREC_NONE},
     [TOKEN_FALSE] = {literal, NULL, PREC_NONE},
@@ -459,7 +520,7 @@ ParseRule rules[] = {
     [TOKEN_FUN] = {NULL, NULL, PREC_NONE},
     [TOKEN_IF] = {NULL, NULL, PREC_NONE},
     [TOKEN_NIL] = {literal, NULL, PREC_NONE},
-    [TOKEN_OR] = {NULL, NULL, PREC_NONE},
+    [TOKEN_OR] = {NULL, or_, PREC_OR},
     [TOKEN_PRINT] = {NULL, NULL, PREC_NONE},
     [TOKEN_RETURN] = {NULL, NULL, PREC_NONE},
     [TOKEN_SUPER] = {NULL, NULL, PREC_NONE},
@@ -526,11 +587,25 @@ static void markInitialized() {
 static void defineVariable(uint8_t global) {
     if (current->scopeDepth > 0) {
         // 本地变量的声明不往chunk里吗放任何值，它由变量的初始化表达式来直接表示。
-        // 如 var a = 1 + 2; 执行到这个表达式的时候，栈顶就是 3 ，这个就代表了变量a的值。后面用到变量a的时候来栈顶取就可以了。
+        // 如 var a = 1 + 2; 执行到这个表达式的时候，栈顶就是 3
+        // ，这个就代表了变量a的值。后面用到变量a的时候来栈顶取就可以了。
         markInitialized();
         return;
     }
     emitBytes(OP_DEFINE_GLOBAL, global);
+}
+
+// 逻辑操作符 and
+// and有短路特性，即一旦出现false，就可以整体跳过后面的条件。
+// 所以用一个有条件跳过指令可以实现，如果出现false，跳过整个条件表达式
+static void and_(bool canAssign) {
+    int endJump = emitJump(OP_JUMP_IF_FALSE);
+    // 将true pop出去。
+    emitByte(OP_POP);
+    // 继续编译后面的表达式
+    parsePrecedence(PREC_AND);
+    // 设置跳过的步数
+    patchJump(endJump);
 }
 
 static ParseRule* getRule(TokenType type) {
@@ -571,10 +646,109 @@ static void varDeclaration() {
 static void expressionStatement() {
     expression();
     consume(TOKEN_SEMICOLON, "Expect ';' after expression.");
-    emitByte(OP_POP);  
+    emitByte(OP_POP);
     // 表达式是逐行执行的，上一行的结果并不对下一行有影响。一个表达式一定会有一个结果值，执行完之后需要把结果pop，清空栈，为下一行执行做准备。
     // 对后面代码的影响只能通过变量来做。
-    // 比如： 1+1; 执行完完之后会在栈里放一个2，但是下一个行是不需要这个2的，需要弹出。
+    // 比如： 1+1;
+    // 执行完完之后会在栈里放一个2，但是下一个行是不需要这个2的，需要弹出。
+}
+
+// for循环比while循环复杂的多....
+// for循环分为四个部分，变量初始化、条件判断、变量递增、循环代码
+// 关键的在于变量递增，因为我们的编译器是一次性从前往后编译代码的，因此变量递增的指令会出现在循环代码指令的前面
+// 但是运行时需要先执行循环代码，再执行变量递增。跟指令的顺序是不一致的。
+// 解决方法是多跳几次：
+// 1、执行完条件判断后，跳过变量递增，直接执行循环代码。
+// 2、循环代码执行完后跳转到变量递增，执行变量递增
+// 3、变量递增执行完后跳转到条件判断
+// 。。。。。
+// 重复上面的步骤直到条件为false,跳出整个循环
+static void forStatement() {
+    // 因为可能有变量定义，开启一个作用域
+    beginScope();
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'for'.");
+    if (match(TOKEN_SEMICOLON)) {
+        // No initializer.
+    } else if (match(TOKEN_VAR)) {
+        // 有var，定义变量
+        varDeclaration();
+    } else {
+        // 变量已经在外边定义，这里只赋值
+        expressionStatement();
+    }
+
+    // 循环开始的位置，一轮结束之后要跳回来
+    int loopStart = currentChunk()->count;
+
+    // 条件判断 -1 代表没有条件判断，可以一直循环
+    int exitJump = -1;
+    if (!match(TOKEN_SEMICOLON)) {
+        // 条件表达式
+        expression();
+        consume(TOKEN_SEMICOLON, "Expect ';' after loop condition.");
+
+        // 有条件跳转指令，如果条件为false需要跳出整个循环
+        exitJump = emitJump(OP_JUMP_IF_FALSE);
+        // 条件值(true)pop出去。
+        emitByte(OP_POP);  // Condition.
+    }
+
+    // 如果有变量递增表达式
+    if (!match(TOKEN_RIGHT_PAREN)) {
+        // 执行到这里时需要跳到代码体，跳过变量递增。
+        int bodyJump = emitJump(OP_JUMP);
+        // 变量递增指令开始的位置，循环体结束之后会跳转到这里
+        int incrementStart = currentChunk()->count;
+        // 变量递增表达式
+        expression();
+        // 把变量值pop出去
+        emitByte(OP_POP);
+        consume(TOKEN_RIGHT_PAREN, "Expect ')' after for clauses.");
+
+        // 递增之后跳转的循环的开始
+        emitLoop(loopStart);
+        loopStart = incrementStart;
+        // 统计变量递增的指令数量
+        patchJump(bodyJump);
+    }
+    // 循环体
+    statement();
+    // 如果有变量递增，此时的loopStart是变量递增的位置，如果没有就是条件判断
+    emitLoop(loopStart);
+
+    if (exitJump != -1) {
+        patchJump(exitJump);
+        emitByte(OP_POP);  // Condition.
+    }
+
+    endScope();
+}
+
+static void ifStatement() {
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'if'.");
+    // 先compile条件表达式
+    expression();
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+    // 有条件跳转指令。如果前面的表达式是true,会继续按顺序执行指令。如果是false，会跳过一些指令。具体跳过多少指令要等
+    // if后面的代码编译完了才知道，这里只是先占个位，后面会把要跳过的指令数量填在thenJump的位置。
+    int thenJump = emitJump(OP_JUMP_IF_FALSE);
+    // 如果没被跳过，会执行到这里，把条件的值pop出来，已经没有用了。
+    emitByte(OP_POP);
+    // true是执行的代码块。
+    statement();
+    // else部分的跳过指令。如果是true才会执行到这里，那么else肯定就不能执行了，需要无条件的跳过。
+    int elseJump = emitJump(OP_JUMP);
+    // 这里是条件为false时要跳转到的位置，后面直接执行else的代码
+    patchJump(thenJump);
+    // 把栈里的false pop出来
+    emitByte(OP_POP);
+
+    if (match(TOKEN_ELSE)) {
+        // 如果有 else的token才解析
+        statement();
+    }
+    // 设置else跳过的指令数量，else代码块到这里就结束了
+    patchJump(elseJump);
 }
 
 // 打印 Statement
@@ -582,6 +756,29 @@ static void printStatement() {
     expression();
     consume(TOKEN_SEMICOLON, "Expect ';' after value.");
     emitByte(OP_PRINT);
+}
+
+// while循环，循环在条件为false时，指令需要跳出来。
+// 结束一次循环时，指令需要跳回循环开始的地方，重新执行循环的指令，当然这时里面的变量的值可能会变化。
+static void whileStatement() {
+    // 循环开始的指令索引，当执行完一轮时需要跳转回来。
+    int loopStart = currentChunk()->count;
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
+    // 条件表达式
+    expression();
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+    // 如果为false，直接跳转到循环结束
+    int exitJump = emitJump(OP_JUMP_IF_FALSE);
+    // 这一轮的条件（true） pop出去
+    emitByte(OP_POP);
+    // 循环体
+    statement();
+    // 跳回开始的指令位置
+    emitLoop(loopStart);
+    // 设置循环结束的指令位置
+    patchJump(exitJump);
+    // 把false pop出去
+    emitByte(OP_POP);
 }
 
 // 从异常模式中恢复编译
@@ -628,12 +825,22 @@ static void statement() {
     if (match(TOKEN_PRINT)) {
         // 打印statement
         printStatement();
+    } else if (match(TOKEN_IF)) {
+        // if
+        ifStatement();
+    } else if (match(TOKEN_WHILE)) {
+        // while循环
+        whileStatement();
+    } else if (match(TOKEN_FOR)) {
+        // for循环
+        forStatement();
     } else if (match(TOKEN_LEFT_BRACE)) {
         // 大括号开头表明遇到了一个block
         beginScope();
         block();
         endScope();
     } else {
+        // 表达式
         expressionStatement();
     }
 }

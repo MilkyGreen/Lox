@@ -99,6 +99,9 @@ static InterpretResult run() {
     (vm.chunk->constants.values \
          [READ_BYTE()])  // READ_BYTE()获取常量在数组中的索引，再从常量池中读取常量
 
+// 连线读取两个byte，组成一个16位数字
+#define READ_SHORT() (vm.ip += 2, (uint16_t)((vm.ip[-2] << 8) | vm.ip[-1]))
+
 #define READ_STRING() AS_STRING(READ_CONSTANT())
 
 // 二元操作的宏。先出栈两个元素，再执行op。
@@ -252,6 +255,25 @@ static InterpretResult run() {
                     printf("\n");
                     break;
                 }
+                case OP_JUMP: {
+                    // 无条件跳转，读取要跳转的指令数量，ip直接 +
+                    uint16_t offset = READ_SHORT();
+                    vm.ip += offset;
+                    break;
+                }
+                case OP_JUMP_IF_FALSE: {
+                    // 有条件跳转，如果是false，跳过一定数量的ip
+                    uint16_t offset = READ_SHORT();
+                    if (isFalsey(peek(0)))
+                        vm.ip += offset;
+                    break;
+                }
+                case OP_LOOP: {
+                    // 循环跳转，即向前跳转一定的指令步数
+                    uint16_t offset = READ_SHORT();
+                    vm.ip -= offset;
+                    break;
+                }
                 case OP_RETURN: {
                     // printValue(pop());
                     // printf("\n");
@@ -260,6 +282,7 @@ static InterpretResult run() {
             }
         }
 #undef READ_BYTE
+#undef READ_SHORT
 #undef READ_CONSTANT
 #undef READ_STRING
 #undef BINARY_OP
