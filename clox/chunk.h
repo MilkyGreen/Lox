@@ -29,6 +29,7 @@ typedef enum {
     OP_JUMP, // 无条件跳转，会跳过一些指令
     OP_JUMP_IF_FALSE, // 有条件跳转
     OP_LOOP, // 循环指令，会跳到之前的指令再执行
+    OP_CALL, // 函数调用
     OP_RETURN,  // 返回
 } OpCode;
 

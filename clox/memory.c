@@ -27,6 +27,15 @@ void* reallocate(void* pointer, size_t oldSize, size_t newSize) {
 // 释放对象内存空间
 static void freeObject(Obj* object) {
     switch (object->type) {
+        case OBJ_FUNCTION: {
+            ObjFunction* function = (ObjFunction*)object;
+            freeChunk(&function->chunk);
+            FREE(ObjFunction, object);
+            break;
+        }
+        case OBJ_NATIVE:
+            FREE(ObjNative, object);
+            break;
         case OBJ_STRING: {
             //直接转成ObjString类型
             ObjString* string = (ObjString*)object;

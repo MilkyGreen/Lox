@@ -20,6 +20,23 @@ static Obj* allocateObject(size_t size, ObjType type) {
     return object;
 }
 
+// 创建函数对象
+ObjFunction* newFunction() {
+    // 开辟开间
+    ObjFunction* function = ALLOCATE_OBJ(ObjFunction, OBJ_FUNCTION);
+    function->arity = 0;
+    function->name = NULL;
+    // 初始化指令数组空间
+    initChunk(&function->chunk);
+    return function;
+}
+
+ObjNative* newNative(NativeFn function) {
+    ObjNative* native = ALLOCATE_OBJ(ObjNative, OBJ_NATIVE);
+    native->function = function;
+    return native;
+}
+
 // 根据传入的字符串和长度，创建ObjString对象
 static ObjString* allocateString(char* chars, int length, uint32_t hash) {
     ObjString* string = ALLOCATE_OBJ(ObjString, OBJ_STRING);
@@ -32,10 +49,10 @@ static ObjString* allocateString(char* chars, int length, uint32_t hash) {
 
 /**
  * @brief 计算字符串的hash值 （FNV-1a）
- * 
- * @param key 
- * @param length 
- * @return uint32_t 
+ *
+ * @param key
+ * @param length
+ * @return uint32_t
  */
 static uint32_t hashString(const char* key, int length) {
     uint32_t hash = 2166136261u;
@@ -72,8 +89,22 @@ ObjString* copyString(const char* chars, int length) {
     return allocateString(heapChars, length, hash);
 }
 
+static void printFunction(ObjFunction* function) {
+    if (function->name == NULL) {
+        printf("<script>");
+        return;
+    }
+    printf("<fn %s>", function->name->chars);
+}
+
 void printObject(Value value) {
     switch (OBJ_TYPE(value)) {
+        case OBJ_FUNCTION:
+            printFunction(AS_FUNCTION(value));
+            break;
+        case OBJ_NATIVE:
+            printf("<native fn>");
+            break;
         case OBJ_STRING:
             printf("%s", AS_CSTRING(value));
             break;

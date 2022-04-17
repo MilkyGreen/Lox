@@ -50,8 +50,19 @@ typedef struct {
     int depth;   // 作用域深度。0代表全局变量
 } Local;
 
-// 正在执行的Compiler记录本地变量
+// 函数类型
+typedef enum {
+    TYPE_FUNCTION,  // 函数
+    TYPE_SCRIPT     // 全局（整个lox脚本也认为是一个函数）
+} FunctionType;
+
+// 正在执行的Compiler
 typedef struct {
+    struct Compiler* enclosing;  // Compiler栈，指向上一层函数的Compiler
+
+    ObjFunction* function;  // 函数对象
+    FunctionType type;      // 函数类型
+
     Local locals[UINT8_COUNT];  // 本地变量列表
     int localCount;             // 本地变量数量
     int scopeDepth;             // 作用域深度
@@ -62,12 +73,10 @@ Parser parser;
 // 当前Compiler对象引用
 Compiler* current = NULL;
 
-// 正在编译中的chunk
-Chunk* compilingChunk;
-
-// 获取当前chunk
+// 获取当前的指令数组
 static Chunk* currentChunk() {
-    return compilingChunk;
+    // 先获取当前函数，再获取函数的指令数组。每遇到一个新的函数时，就会开辟一个新的chunk
+    return &current->function->chunk;
 }
 
 /**
@@ -184,6 +193,8 @@ static int emitJump(uint8_t instruction) {
 
 // 写入一个return指令
 static void emitReturn() {
+    // 默认return nil
+    emitByte(OP_NIL);
     emitByte(OP_RETURN);
 }
 
@@ -220,21 +231,50 @@ static void patchJump(int offset) {
     currentChunk()->code[offset + 1] = jump & 0xff;
 }
 
-// 初始化Compiler
-static void initCompiler(Compiler* compiler) {
+/**
+ * @brief 初始化Compiler
+ *
+ * @param compiler
+ * @param type 函数类型
+ */
+static void initCompiler(Compiler* compiler, FunctionType type) {
+    // 上级Compiler
+    compiler->enclosing = current;
+
+    compiler->function = NULL;
+    compiler->type = type;
     compiler->localCount = 0;
     compiler->scopeDepth = 0;
+    compiler->function = newFunction();
     current = compiler;
+
+    if (type != TYPE_SCRIPT) {
+        // 当前函数名称，需要从源码字符串拷贝一下
+        current->function->name =
+            copyString(parser.previous.start, parser.previous.length);
+    }
+
+    // 当前compiler的第一个Local留给VM自己用
+    Local* local = &current->locals[current->localCount++];
+    local->depth = 0;
+    local->name.start = "";
+    local->name.length = 0;
 }
 
-// 结束编译
-static void endCompiler() {
+// 结束编译，返回函数对象
+static ObjFunction* endCompiler() {
+    // 所有函数后面都默认返回nil。如果前面的body里面已经有return, 则会在执行中跳过默认的return nil
     emitReturn();
+    ObjFunction* function = current->function;
 #ifdef DEBUG_PRINT_CODE
     if (!parser.hadError) {
-        disassembleChunk(currentChunk(), "code");
+        disassembleChunk(currentChunk(), function->name != NULL
+                                             ? function->name->chars
+                                             : "<script>");
     }
 #endif
+    current = current->enclosing;
+    return function;
 }
 
 // 开启一个block
@@ -325,6 +365,69 @@ static void declareVariable() {
     addLocal(*name);
 }
 
+
+// 定义变量名称，把字符串名称放入常量池，后面只使用常量池索引
+static uint8_t parseVariable(const char* errorMessage) {
+    consume(TOKEN_IDENTIFIER, errorMessage);
+    // 变量声明，会将本地变量放入数组、校验是否有重名
+    declareVariable();
+    if (current->scopeDepth > 0) {
+        // 本地变量不用放入常量池
+        return 0;
+    }
+
+    return identifierConstant(&parser.previous);
+}
+
+// 设置本地变量的深度
+static void markInitialized() {
+    if (current->scopeDepth == 0)
+        return;
+    current->locals[current->localCount - 1].depth = current->scopeDepth;
+}
+
+// 变量定义
+static void defineVariable(uint8_t global) {
+    if (current->scopeDepth > 0) {
+        // 本地变量的声明不往chunk里放任何值，它由变量的初始化表达式来直接表示。
+        // 如 var a = 1 + 2; 执行到这个表达式的时候，栈顶就是 3
+        // ，这个就代表了变量a的值。后面用到变量a的时候来栈顶取就可以了。
+        markInitialized();
+        return;
+    }
+    emitBytes(OP_DEFINE_GLOBAL, global);
+}
+
+// 解析函数调用入参
+static uint8_t argumentList() {
+    uint8_t argCount = 0;
+    if (!check(TOKEN_RIGHT_PAREN)) {
+        do {
+            // 解析入参
+            expression();
+            if (argCount == 255) {
+                error("Can't have more than 255 arguments.");
+            }
+            argCount++;
+        } while (match(TOKEN_COMMA));
+    }
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
+    return argCount;
+}
+
+// 逻辑操作符 and
+// and有短路特性，即一旦出现false，就可以整体跳过后面的条件。
+// 所以用一个有条件跳过指令可以实现，如果出现false，跳过整个条件表达式
+static void and_(bool canAssign) {
+    int endJump = emitJump(OP_JUMP_IF_FALSE);
+    // 将true pop出去。
+    emitByte(OP_POP);
+    // 继续编译后面的表达式
+    parsePrecedence(PREC_AND);
+    // 设置跳过的步数
+    patchJump(endJump);
+}
+
 static void binary(bool canAssign) {
     // 获取当前token
     TokenType operatorType = parser.previous.type;
@@ -368,6 +471,16 @@ static void binary(bool canAssign) {
         default:
             return;  // Unreachable.
     }
+}
+
+// 函数调用解析。
+// 函数调用分为
+// 函数名+一对括号，写按标识符解析函数名，然后获得括号的中缀表达式方法，即call
+static void call(bool canAssign) {
+    // 解析入参表达式
+    uint8_t argCount = argumentList();
+    // 增加一个函数调用指令和参数数量
+    emitBytes(OP_CALL, argCount);
 }
 
 /**
@@ -488,9 +601,11 @@ static void unary(bool canAssign) {
     }
 }
 
+
+
 // token类型和所属的前缀，中缀解析方法，优先级对应关系
 ParseRule rules[] = {
-    [TOKEN_LEFT_PAREN] = {grouping, NULL, PREC_NONE},
+    [TOKEN_LEFT_PAREN] = {grouping, call, PREC_CALL},
     [TOKEN_RIGHT_PAREN] = {NULL, NULL, PREC_NONE},
     [TOKEN_LEFT_BRACE] = {NULL, NULL, PREC_NONE},
     [TOKEN_RIGHT_BRACE] = {NULL, NULL, PREC_NONE},
@@ -565,48 +680,6 @@ static void parsePrecedence(Precedence precedence) {
     }
 }
 
-// 定义变量名称，把字符串名称放入常量池，后面只使用常量池索引
-static uint8_t parseVariable(const char* errorMessage) {
-    consume(TOKEN_IDENTIFIER, errorMessage);
-    // 变量声明，会将本地变量放入数组、校验是否有重名
-    declareVariable();
-    if (current->scopeDepth > 0) {
-        // 本地变量不用放入常量池
-        return 0;
-    }
-
-    return identifierConstant(&parser.previous);
-}
-
-// 设置本地变量的深度
-static void markInitialized() {
-    current->locals[current->localCount - 1].depth = current->scopeDepth;
-}
-
-// 变量定义
-static void defineVariable(uint8_t global) {
-    if (current->scopeDepth > 0) {
-        // 本地变量的声明不往chunk里吗放任何值，它由变量的初始化表达式来直接表示。
-        // 如 var a = 1 + 2; 执行到这个表达式的时候，栈顶就是 3
-        // ，这个就代表了变量a的值。后面用到变量a的时候来栈顶取就可以了。
-        markInitialized();
-        return;
-    }
-    emitBytes(OP_DEFINE_GLOBAL, global);
-}
-
-// 逻辑操作符 and
-// and有短路特性，即一旦出现false，就可以整体跳过后面的条件。
-// 所以用一个有条件跳过指令可以实现，如果出现false，跳过整个条件表达式
-static void and_(bool canAssign) {
-    int endJump = emitJump(OP_JUMP_IF_FALSE);
-    // 将true pop出去。
-    emitByte(OP_POP);
-    // 继续编译后面的表达式
-    parsePrecedence(PREC_AND);
-    // 设置跳过的步数
-    patchJump(endJump);
-}
 
 static ParseRule* getRule(TokenType type) {
     return &rules[type];
@@ -624,6 +697,50 @@ static void block() {
     }
 
     consume(TOKEN_RIGHT_BRACE, "Expect '}' after block.");
+}
+
+// 创建函数对象
+static void function(FunctionType type) {
+    // 创建新的compiler绑定到函数
+    Compiler compiler;
+    initCompiler(&compiler, type);
+    // 开启一个作用域
+    beginScope();
+
+    consume(TOKEN_LEFT_PAREN, "Expect '(' after function name.");
+    // 出差函数入参
+    if (!check(TOKEN_RIGHT_PAREN)) {
+        do {
+            // 入参数量+1
+            current->function->arity++;
+            if (current->function->arity > 255) {
+                errorAtCurrent("Can't have more than 255 parameters.");
+            }
+            // 解析一个入参，声明为本地变量。（函数的入参就是函数方法体内的本地变量）
+            uint8_t constant = parseVariable("Expect parameter name.");
+            defineVariable(constant);
+        } while (match(TOKEN_COMMA));
+    }
+    consume(TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
+    consume(TOKEN_LEFT_BRACE, "Expect '{' before function body.");
+    // 函数代码块
+    block();
+
+    // 返回函数对象
+    ObjFunction* function = endCompiler();
+    // 函数对象放入常量池
+    emitBytes(OP_CONSTANT, makeConstant(OBJ_VAL(function)));
+}
+
+// 函数声明
+static void funDeclaration() {
+    // 函数名称
+    uint8_t global = parseVariable("Expect function name.");
+    markInitialized();
+    // 创建函数对象
+    function(TYPE_FUNCTION);
+    // 函数放入全局变量字典中
+    defineVariable(global);
 }
 
 // 变量定义
@@ -758,6 +875,22 @@ static void printStatement() {
     emitByte(OP_PRINT);
 }
 
+// return 声明
+static void returnStatement() {
+    if (current->type == TYPE_SCRIPT) {
+        error("Can't return from top-level code.");
+    }
+    if (match(TOKEN_SEMICOLON)) {
+        // 没有返回值的话直接return
+        emitReturn();
+    } else {
+        // 解析返回表达式，然后返回
+        expression();
+        consume(TOKEN_SEMICOLON, "Expect ';' after return value.");
+        emitByte(OP_RETURN);
+    }
+}
+
 // while循环，循环在条件为false时，指令需要跳出来。
 // 结束一次循环时，指令需要跳回循环开始的地方，重新执行循环的指令，当然这时里面的变量的值可能会变化。
 static void whileStatement() {
@@ -808,7 +941,9 @@ static void synchronize() {
 
 // 处理declaration
 static void declaration() {
-    if (match(TOKEN_VAR)) {
+    if (match(TOKEN_FUN)) {
+        funDeclaration();
+    } else if (match(TOKEN_VAR)) {
         // 变量定义声明
         varDeclaration();
     } else {
@@ -834,6 +969,8 @@ static void statement() {
     } else if (match(TOKEN_FOR)) {
         // for循环
         forStatement();
+    } else if (match(TOKEN_RETURN)) {
+        returnStatement();
     } else if (match(TOKEN_LEFT_BRACE)) {
         // 大括号开头表明遇到了一个block
         beginScope();
@@ -850,11 +987,10 @@ static void statement() {
  *
  * @param source
  */
-bool compile(const char* source, Chunk* chunk) {
+ObjFunction* compile(const char* source) {
     initScanner(source);  // 先交给scanner进行token识别
     Compiler compiler;
-    initCompiler(&compiler);
-    compilingChunk = chunk;
+    initCompiler(&compiler, TYPE_SCRIPT);
     parser.hadError = false;
     parser.panicMode = false;
     advance();
@@ -862,6 +998,6 @@ bool compile(const char* source, Chunk* chunk) {
     while (!match(TOKEN_EOF)) {
         declaration();
     }
-    endCompiler();
-    return !parser.hadError;
+    ObjFunction* function = endCompiler();
+    return parser.hadError ? NULL : function;
 }

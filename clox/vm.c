@@ -2,6 +2,7 @@
 #include <stdio.h>
 
 #include <string.h>
+#include <time.h>
 #include "common.h"
 #include "compiler.h"
 #include "debug.h"
@@ -12,12 +13,18 @@
 // 虚拟机对象
 VM vm;
 
+// clockNative函数
+static Value clockNative(int argCount, Value* args) {
+    return NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
+}
+
 /**
  * @brief 重置栈。把栈顶移向数组头部，相当于清空栈
  *
  */
 static void resetStack() {
     vm.stackTop = vm.stack;
+    vm.frameCount = 0;
 }
 
 /**
@@ -33,18 +40,37 @@ static void runtimeError(const char* format, ...) {
     va_end(args);
     fputs("\n", stderr);
 
-    // 打印行数
-    size_t instruction = vm.ip - vm.chunk->code - 1;
-    int line = vm.chunk->lines[instruction];
-    fprintf(stderr, "[line %d] in script\n", line);
+    //打印函数调用链上的所有帧栈
+    for (int i = vm.frameCount - 1; i >= 0; i--) {
+        CallFrame* frame = &vm.frames[i];
+        ObjFunction* function = frame->function;
+        size_t instruction = frame->ip - function->chunk.code - 1;
+        fprintf(stderr, "[line %d] in ", function->chunk.lines[instruction]);
+        if (function->name == NULL) {
+            fprintf(stderr, "script\n");
+        } else {
+            fprintf(stderr, "%s()\n", function->name->chars);
+        }
+    }
     // 重置栈
     resetStack();
+}
+
+// 定义navtive函数
+static void defineNative(const char* name, NativeFn function) {
+    // push然后pop是确保GC不会在这期间回收这些字符串
+    push(OBJ_VAL(copyString(name, (int)strlen(name))));
+    push(OBJ_VAL(newNative(function)));
+    tableSet(&vm.globals, AS_STRING(vm.stack[0]), vm.stack[1]);
+    pop();
+    pop();
 }
 
 void initVM() {
     vm.objects = NULL;
     initTable(&vm.globals);
-    initTable(&vm.strings);  // 初始化字符串缓存哈希表
+    initTable(&vm.strings);              // 初始化字符串缓存哈希表
+    defineNative("clock", clockNative);  // 定义一个native函数
     resetStack();
 }
 
@@ -71,6 +97,54 @@ static Value peek(int distance) {
     return vm.stackTop[-1 - distance];
 }
 
+// 执行函数调用。
+// 函数的执行其实还是通过run()
+// 方法来执行，只是我们把当前的函数帧改为目标函数的执行帧。
+// 执行结束之后会再恢复当前的函数帧。
+static bool call(ObjFunction* function, int argCount) {
+    // 实际入参和函数定义不符
+    if (argCount != function->arity) {
+        runtimeError("Expected %d arguments but got %d.", function->arity,
+                     argCount);
+        return false;
+    }
+
+    if (vm.frameCount == FRAMES_MAX) {
+        runtimeError("Stack overflow.");
+        return false;
+    }
+
+    // 新的帧
+    CallFrame* frame = &vm.frames[vm.frameCount++];
+    frame->function = function;        // 帧绑定函数
+    frame->ip = function->chunk.code;  // 帧绑定函数的指令数组
+    frame->slots =
+        vm.stackTop - argCount -
+        1;  // vm的栈始终是一个，新的函数帧的栈从函数对象位置开始，后面跟的是函数的入参
+    return true;
+}
+
+// 执行函数调用
+static bool callValue(Value callee, int argCount) {
+    if (IS_OBJ(callee)) {
+        switch (OBJ_TYPE(callee)) {
+            case OBJ_FUNCTION:
+                return call(AS_FUNCTION(callee), argCount);
+            case OBJ_NATIVE: {
+                NativeFn native = AS_NATIVE(callee);
+                Value result = native(argCount, vm.stackTop - argCount);
+                vm.stackTop -= argCount + 1;
+                push(result);
+                return true;
+            }
+            default:
+                break;  // Non-callable object type.
+        }
+    }
+    runtimeError("Can only call functions and classes.");
+    return false;
+}
+
 static bool isFalsey(Value value) {
     return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
 }
@@ -93,14 +167,19 @@ static void concatenate() {
     push(OBJ_VAL(result));
 }
 
+// 运行指令
 static InterpretResult run() {
-#define READ_BYTE() (*vm.ip++)  // 宏定义：读取一个指令，ip++
-#define READ_CONSTANT()         \
-    (vm.chunk->constants.values \
-         [READ_BYTE()])  // READ_BYTE()获取常量在数组中的索引，再从常量池中读取常量
+    CallFrame* frame = &vm.frames[vm.frameCount - 1];
 
-// 连线读取两个byte，组成一个16位数字
-#define READ_SHORT() (vm.ip += 2, (uint16_t)((vm.ip[-2] << 8) | vm.ip[-1]))
+// 从当前函数的frame指令数组中，读取一个byte
+#define READ_BYTE() (*frame->ip++)
+
+// 连线读取两个byte组成一个short
+#define READ_SHORT() \
+    (frame->ip += 2, (uint16_t)((frame->ip[-2] << 8) | frame->ip[-1]))
+
+// 从当前frame中读取一个常量
+#define READ_CONSTANT() (frame->function->chunk.constants.values[READ_BYTE()])
 
 #define READ_STRING() AS_STRING(READ_CONSTANT())
 
@@ -132,7 +211,8 @@ static InterpretResult run() {
 
         // debug模式每次输出要执行的指令。 ip存的是指针地址，vm.ip -
         // vm.chunk->code 代表下一个指令在code数组中的offset
-        disassembleInstruction(vm.chunk, (int)(vm.ip - vm.chunk->code));
+        disassembleInstruction(&frame->function->chunk,
+                               (int)(frame->ip - frame->function->chunk.code));
 #endif
 
         uint8_t instruction;
@@ -160,14 +240,14 @@ static InterpretResult run() {
                 // 本地变量取值，下一个指令就是本地变量值在栈中的索引
                 uint8_t slot = READ_BYTE();
                 // 将值push进栈
-                push(vm.stack[slot]);
+                push(frame->slots[slot]);
                 break;
             }
             case OP_SET_LOCAL: {
                 // 本地变量赋值，下一个指令就是本地变量值在栈中的索引
                 uint8_t slot = READ_BYTE();
                 // 将索引位置的值修改。这里用peek是因为表达式后面统一都跟了一个pop，会统一把值弹出，清空栈。
-                vm.stack[slot] = peek(0);
+                frame->slots[slot] = peek(0);
                 break;
             }
             case OP_GET_GLOBAL: {
@@ -258,26 +338,52 @@ static InterpretResult run() {
                 case OP_JUMP: {
                     // 无条件跳转，读取要跳转的指令数量，ip直接 +
                     uint16_t offset = READ_SHORT();
-                    vm.ip += offset;
+                    frame->ip += offset;
                     break;
                 }
                 case OP_JUMP_IF_FALSE: {
                     // 有条件跳转，如果是false，跳过一定数量的ip
                     uint16_t offset = READ_SHORT();
                     if (isFalsey(peek(0)))
-                        vm.ip += offset;
+                        frame->ip += offset;
                     break;
                 }
                 case OP_LOOP: {
                     // 循环跳转，即向前跳转一定的指令步数
                     uint16_t offset = READ_SHORT();
-                    vm.ip -= offset;
+                    frame->ip -= offset;
+                    break;
+                }
+                case OP_CALL: {
+                    // 获取入参数量
+                    int argCount = READ_BYTE();
+                    // 从栈中获函数对象，执行函数
+                    if (!callValue(peek(argCount), argCount)) {
+                        return INTERPRET_RUNTIME_ERROR;
+                    }
+                    // callValue() 会创建一个新的frame，将它赋给当前frame，这样下一轮loop就会执行函数中的指令
+                    frame = &vm.frames[vm.frameCount - 1];
                     break;
                 }
                 case OP_RETURN: {
-                    // printValue(pop());
-                    // printf("\n");
-                    return INTERPRET_OK;
+                    // 获取返回值
+                    Value result = pop();
+                    // 函数帧减一
+                    vm.frameCount--;
+                    if (vm.frameCount == 0) {
+                        // 如果已经退到最后，说明脚本执行结束了
+                        pop();
+                        return INTERPRET_OK;
+                    }
+                    // 丢弃执行完的函数帧在栈上的窗口，回到函数调用前的位置
+                    vm.stackTop = frame->slots;
+                    // 结果放入栈中
+                    push(result);
+                    // 恢复caller的frame，继续回到函数调用之后的指令。
+                    // 每个函数都会return，会在编译阶段统一在函数后面增加return nil指令。
+                    // 如果函数指定的return ，那么隐含的return nil则会因为frame的改变被跳过
+                    frame = &vm.frames[vm.frameCount - 1];
+                    break;
                 }
             }
         }
@@ -295,19 +401,13 @@ static InterpretResult run() {
  * @return InterpretResult
  */
 InterpretResult interpret(const char* source) {
-    Chunk chunk;
-    initChunk(&chunk);
-
-    if (!compile(source, &chunk)) {
-        freeChunk(&chunk);
+    // 编译源码，返回顶级函数
+    ObjFunction* function = compile(source);
+    if (function == NULL)
         return INTERPRET_COMPILE_ERROR;
-    }
 
-    vm.chunk = &chunk;
-    vm.ip = vm.chunk->code;
-
-    InterpretResult result = run();
-
-    freeChunk(&chunk);
-    return result;
+    // 将函数对象放入执行栈
+    push(OBJ_VAL(function));
+    call(function, 0);
+    return run();
 }
