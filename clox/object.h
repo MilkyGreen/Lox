@@ -40,8 +40,10 @@ typedef struct {
     ObjString* name;  // 函数名称
 } ObjFunction;
 
+// 定义 NativeFn 函数
 typedef Value (*NativeFn)(int argCount, Value* args);
 
+// native函数对象
 typedef struct {
     Obj obj;
     NativeFn function;

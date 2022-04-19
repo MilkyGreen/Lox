@@ -6,8 +6,8 @@
 #include "table.h"
 #include "value.h"
 
-// 最大自负载因子。负载因子=count/cap
-// ，达到这个值说明需要扩容了，不然后面冲突的可能性会比较大。
+// 最大负载因子。负载因子=count/cap
+// 达到这个值说明需要扩容了，不然后面冲突的可能性会比较大。
 #define TABLE_MAX_LOAD 0.75
 
 void initTable(Table* table) {

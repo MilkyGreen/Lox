@@ -27,7 +27,7 @@ typedef enum {
     TOKEN_GREATER_EQUAL,
     TOKEN_LESS,
     TOKEN_LESS_EQUAL,
-    // Literals 字面量或者变量、方法名.
+    // Literals 变量、方法、类名.
     TOKEN_IDENTIFIER,
     TOKEN_STRING,
     TOKEN_NUMBER,
@@ -53,10 +53,11 @@ typedef enum {
     TOKEN_EOF
 } TokenType;
 
+// Token对象
 typedef struct {
     TokenType type; // 类型
     const char* start; // token字符串头指针
-    int length; // token的长度
+    int length; // token字符的长度
     int line; // 所处的代码行数
 } Token;
 

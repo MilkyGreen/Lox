@@ -11,10 +11,9 @@
 
 typedef struct {
     Token current;   // 当前的token
-    Token previous;  // 上一个token
-    bool hadError;   // 是否遇到了错误
-    // 是否处于panic模式（遇到语法错误，直到一个语句结束会推出panic模式，忽略中间的错误）
-    bool panicMode;
+    Token previous;  // 上一个token。只要记住两个token就可以了
+    bool hadError;   // 是否遇到了编译错误
+    bool panicMode;  // 是否处于panic模式（遇到语法错误，直到一个语句结束会退出panic模式，忽略中间的错误）
 } Parser;
 
 /**
@@ -23,6 +22,7 @@ typedef struct {
  */
 typedef void (*ParseFn)(bool canAssign);
 
+// token优先级。在解析一个token的时候如果后面有更高优先级的token，则要和后面的token组成新的表达式。
 typedef enum {
     PREC_NONE,
     PREC_ASSIGNMENT,  // =
@@ -39,12 +39,15 @@ typedef enum {
 
 // ParseRule代表一种token对应的前缀、中缀parser函数和优先级
 typedef struct {
-    ParseFn prefix;
-    ParseFn infix;
+    // 前缀解析函数。指一个token作为表达式前缀的时候的解析函数。如 ！作为前缀可以组成否定表达式，prefix函数是 unary，一元表达式
+    ParseFn prefix; 
+    // 中缀解析函数。指一个token作为表达式中缀的时候的解析函数。如 +，作为中缀可以组成一个二元表达式，对应的infix函数就是binary
+    ParseFn infix;  
+    // 优先级。
     Precedence precedence;
 } ParseRule;
 
-// 本地变量
+// 本地变量结构
 typedef struct {
     Token name;  // 变量token名称
     int depth;   // 作用域深度。0代表全局变量
@@ -58,7 +61,8 @@ typedef enum {
 
 // 正在执行的Compiler
 typedef struct {
-    struct Compiler* enclosing;  // Compiler栈，指向上一层函数的Compiler
+    // Compiler栈，指向上一层函数的Compiler。每解析到一个函数会新建一个专用compiler，记录上一层的，杰希望之后会还原。
+    struct Compiler* enclosing;  
 
     ObjFunction* function;  // 函数对象
     FunctionType type;      // 函数类型
@@ -112,7 +116,7 @@ static void errorAtCurrent(const char* message) {
 }
 
 /**
- * @brief 每次从源码中scanner出一个token，转成指令放入chunk
+ * @brief 每次从源码中scanner出一个token
  *
  */
 static void advance() {

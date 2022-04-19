@@ -98,9 +98,8 @@ static Value peek(int distance) {
 }
 
 // 执行函数调用。
-// 函数的执行其实还是通过run()
-// 方法来执行，只是我们把当前的函数帧改为目标函数的执行帧。
-// 执行结束之后会再恢复当前的函数帧。
+// 函数的执行其实还是通过VM的run()方法执行，只是我们把当前的函数帧改为目标函数的执行帧。这样下一个loop就开始执行函数的指令了。
+// 执行结束之后会再恢复之前的函数帧。
 static bool call(ObjFunction* function, int argCount) {
     // 实际入参和函数定义不符
     if (argCount != function->arity) {
@@ -114,13 +113,13 @@ static bool call(ObjFunction* function, int argCount) {
         return false;
     }
 
-    // 新的帧
+    // 创建一个新的帧，即要执行的函数的帧
     CallFrame* frame = &vm.frames[vm.frameCount++];
     frame->function = function;        // 帧绑定函数
     frame->ip = function->chunk.code;  // 帧绑定函数的指令数组
-    frame->slots =
-        vm.stackTop - argCount -
-        1;  // vm的栈始终是一个，新的函数帧的栈从函数对象位置开始，后面跟的是函数的入参
+
+    // vm的栈始终是一个，新的函数帧所使用的栈其实是整个vm栈上面的一个「片段」或「窗口」，从函数对象位置开始，后面跟的是函数的入参
+    frame->slots = vm.stackTop - argCount - 1;
     return true;
 }
 
@@ -131,9 +130,12 @@ static bool callValue(Value callee, int argCount) {
             case OBJ_FUNCTION:
                 return call(AS_FUNCTION(callee), argCount);
             case OBJ_NATIVE: {
+                // native函数，直接调用，不用走VM执行
                 NativeFn native = AS_NATIVE(callee);
                 Value result = native(argCount, vm.stackTop - argCount);
+                // 把函数调用是用的参入从栈中清掉
                 vm.stackTop -= argCount + 1;
+                // 函数的结果放入栈
                 push(result);
                 return true;
             }
@@ -169,6 +171,7 @@ static void concatenate() {
 
 // 运行指令
 static InterpretResult run() {
+    // 获取当前函数帧
     CallFrame* frame = &vm.frames[vm.frameCount - 1];
 
 // 从当前函数的frame指令数组中，读取一个byte
@@ -216,11 +219,14 @@ static InterpretResult run() {
 #endif
 
         uint8_t instruction;
+        // 每次从frame中读取一个指令
         switch (instruction = READ_BYTE()) {
             case OP_CONSTANT: {
+                // 常量指令，再读取后面常量值
                 Value constant = READ_CONSTANT();
                 printValue(constant);
                 printf("\n");
+                // 值入栈
                 push(constant);
                 break;
             }
@@ -251,6 +257,7 @@ static InterpretResult run() {
                 break;
             }
             case OP_GET_GLOBAL: {
+                // 全局变量获取
                 // 获取变量名
                 ObjString* name = READ_STRING();
                 Value value;
@@ -264,15 +271,18 @@ static InterpretResult run() {
                 break;
             }
             case OP_DEFINE_GLOBAL: {
+                // 全局变量定义
                 // 获取变量名称
                 ObjString* name = READ_STRING();
                 // 将变量放入全局变量集合
                 tableSet(&vm.globals, name, peek(0));
                 // 把变量的value pop()出来，后面会通过变量名从全局变量中获取
+                // 这里pop是因为变量定义属于声明，不是表达式，不会统一在后面加POP指令
                 pop();
                 break;
             }
             case OP_SET_GLOBAL: {
+                // 全局变量取值
                 // 读取变量名
                 ObjString* name = READ_STRING();
                 // 试图赋值，如果是第一次赋值，说名变量还没定义过，需要报错
@@ -311,88 +321,90 @@ static InterpretResult run() {
                     return INTERPRET_RUNTIME_ERROR;
                 }
                 break;
-                case OP_SUBTRACT:
-                    BINARY_OP(NUMBER_VAL, -);
-                    break;
-                case OP_MULTIPLY:
-                    BINARY_OP(NUMBER_VAL, *);
-                    break;
-                case OP_DIVIDE:
-                    BINARY_OP(NUMBER_VAL, /);
-                    break;
-                case OP_NOT:
-                    push(BOOL_VAL(isFalsey(pop())));
-                    break;
-                case OP_NEGATE:
-                    if (!IS_NUMBER(peek(0))) {
-                        runtimeError("Operand must be a number.");
-                        return INTERPRET_RUNTIME_ERROR;
-                    }
-                    push(NUMBER_VAL(-AS_NUMBER(pop())));
-                    break;
-                case OP_PRINT: {
-                    printValue(pop());
-                    printf("\n");
-                    break;
+            }
+            case OP_SUBTRACT:
+                BINARY_OP(NUMBER_VAL, -);
+                break;
+            case OP_MULTIPLY:
+                BINARY_OP(NUMBER_VAL, *);
+                break;
+            case OP_DIVIDE:
+                BINARY_OP(NUMBER_VAL, /);
+                break;
+            case OP_NOT:
+                push(BOOL_VAL(isFalsey(pop())));
+                break;
+            case OP_NEGATE:
+                if (!IS_NUMBER(peek(0))) {
+                    runtimeError("Operand must be a number.");
+                    return INTERPRET_RUNTIME_ERROR;
                 }
-                case OP_JUMP: {
-                    // 无条件跳转，读取要跳转的指令数量，ip直接 +
-                    uint16_t offset = READ_SHORT();
+                push(NUMBER_VAL(-AS_NUMBER(pop())));
+                break;
+            case OP_PRINT: {
+                printValue(pop());
+                printf("\n");
+                break;
+            }
+            case OP_JUMP: {
+                // 无条件跳转
+                // 后面的指令是要跳转的指令数量，读取之后，ip直接 + offset。这样就跳过了offset个指令
+                uint16_t offset = READ_SHORT();
+                frame->ip += offset;
+                break;
+            }
+            case OP_JUMP_IF_FALSE: {
+                // 有条件跳转，如果栈顶元素是false，则跳过一定数量的ip。否则不跳转。
+                uint16_t offset = READ_SHORT();
+                if (isFalsey(peek(0)))
                     frame->ip += offset;
-                    break;
+                break;
+            }
+            case OP_LOOP: {
+                // 循环跳转，即向前跳转offset个指令数量，即重新从前面一个位置开始执行，这样就做到的循环的效果。
+                uint16_t offset = READ_SHORT();
+                frame->ip -= offset;
+                break;
+            }
+            case OP_CALL: {
+                // 函数执行
+                // 后面跟的是入参数量，读取出来
+                int argCount = READ_BYTE();
+                // 从栈中获函数对象，执行函数。（函数对象本身也是在栈里的）
+                if (!callValue(peek(argCount), argCount)) {
+                    return INTERPRET_RUNTIME_ERROR;
                 }
-                case OP_JUMP_IF_FALSE: {
-                    // 有条件跳转，如果是false，跳过一定数量的ip
-                    uint16_t offset = READ_SHORT();
-                    if (isFalsey(peek(0)))
-                        frame->ip += offset;
-                    break;
+                // callValue() 会创建一个新的frame，将它赋给当前frame，这样下一轮loop就会执行函数中的指令。
+                frame = &vm.frames[vm.frameCount - 1];
+                break;
+            }
+            case OP_RETURN: {
+                // 获取返回值
+                Value result = pop();
+                // 函数帧减一，代表当前函数执行结束了。
+                vm.frameCount--;
+                if (vm.frameCount == 0) {
+                    // 如果已经退到最后，说明脚本执行结束了
+                    pop();
+                    return INTERPRET_OK;
                 }
-                case OP_LOOP: {
-                    // 循环跳转，即向前跳转一定的指令步数
-                    uint16_t offset = READ_SHORT();
-                    frame->ip -= offset;
-                    break;
-                }
-                case OP_CALL: {
-                    // 获取入参数量
-                    int argCount = READ_BYTE();
-                    // 从栈中获函数对象，执行函数
-                    if (!callValue(peek(argCount), argCount)) {
-                        return INTERPRET_RUNTIME_ERROR;
-                    }
-                    // callValue() 会创建一个新的frame，将它赋给当前frame，这样下一轮loop就会执行函数中的指令
-                    frame = &vm.frames[vm.frameCount - 1];
-                    break;
-                }
-                case OP_RETURN: {
-                    // 获取返回值
-                    Value result = pop();
-                    // 函数帧减一
-                    vm.frameCount--;
-                    if (vm.frameCount == 0) {
-                        // 如果已经退到最后，说明脚本执行结束了
-                        pop();
-                        return INTERPRET_OK;
-                    }
-                    // 丢弃执行完的函数帧在栈上的窗口，回到函数调用前的位置
-                    vm.stackTop = frame->slots;
-                    // 结果放入栈中
-                    push(result);
-                    // 恢复caller的frame，继续回到函数调用之后的指令。
-                    // 每个函数都会return，会在编译阶段统一在函数后面增加return nil指令。
-                    // 如果函数指定的return ，那么隐含的return nil则会因为frame的改变被跳过
-                    frame = &vm.frames[vm.frameCount - 1];
-                    break;
-                }
+                // 丢弃执行完的函数帧在栈上的窗口，回到函数调用前的位置
+                vm.stackTop = frame->slots;
+                // 结果放入栈中
+                push(result);
+                // 恢复caller的frame，继续回到函数调用之后的指令。
+                // 每个函数都会return，会在编译阶段统一在函数后面增加return nil指令。
+                // 如果函数指定的return ，那么隐含的return nil则会因为frame的改变被跳过。
+                frame = &vm.frames[vm.frameCount - 1];
+                break;
             }
         }
+    }
 #undef READ_BYTE
 #undef READ_SHORT
 #undef READ_CONSTANT
 #undef READ_STRING
 #undef BINARY_OP
-    }
 }
 
 /**
