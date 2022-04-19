@@ -437,7 +437,7 @@ static void binary(bool canAssign) {
     TokenType operatorType = parser.previous.type;
     // 获取该token的parse规则
     ParseRule* rule = getRule(operatorType);
-    // 先试图解析更高一层的规则
+    // 先解析右半部分的表达式（左半部分已经解析过了）
     parsePrecedence((Precedence)(rule->precedence + 1));
 
     switch (operatorType) {
@@ -655,8 +655,7 @@ ParseRule rules[] = {
 // 1 + 2 * 3
 // 首先遇到1，按数字解析，放入chunk。后面遇到更大优先级的+，继续获取+的中缀方法binary，执行binary，
 // 看看后面是否有更高优先级的token，有的话放入chunk，最后放入自己的操作符。
-// chunk里的元素应该是: 1 2 3 * + 。 放入栈中的之后的顺序是：3 2 1, 计算是先取 +
-// ，然后取* 取出2和3，相乘放6进入栈，再取6和1，相加
+// chunk里的元素应该是: 1 2 3 * + 。 放入栈中的之后的顺序是：3 2 1, 计算是先取* 取出2和3，相乘放6进入栈，再取6和1，相加
 static void parsePrecedence(Precedence precedence) {
     advance();  // 前进一个token
     // 获取上个一个(当前操作的)token的前缀parse方法。任何一个token只少属于一个前缀表达式
@@ -669,7 +668,12 @@ static void parsePrecedence(Precedence precedence) {
     bool canAssign = precedence <= PREC_ASSIGNMENT;
     prefixRule(canAssign);
 
-    // 后面一个token如果优先级更高，则和前面处理过的那些token共同组成一个中缀表达式
+    // 后面一个token如果优先级更高，则和前面处理过的那些token共同组成一个中缀表达式。while是为了后面有多个高优先级中缀表达式，比如：1 + 2 * 3 / 6  解析成指令：1 2 3 * 6 / + 
+    // 执行步骤1：栈：3 2 1   指令： * 6 、 +
+    // 执行步骤2：栈：6 1     指令： 6 / +
+    // 执行步骤3：栈：6 6 1   指令: / +
+    // 执行步骤4：栈：1 1     指令: +
+    // 执行步骤5：栈：2       指令: 
     while (precedence <= getRule(parser.current.type)->precedence) {
         advance();  // 消费一个token
         // 获取中缀解析方法
