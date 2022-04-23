@@ -13,7 +13,8 @@ typedef struct {
     Token current;   // 当前的token
     Token previous;  // 上一个token。只要记住两个token就可以了
     bool hadError;   // 是否遇到了编译错误
-    bool panicMode;  // 是否处于panic模式（遇到语法错误，直到一个语句结束会退出panic模式，忽略中间的错误）
+    bool
+        panicMode;  // 是否处于panic模式（遇到语法错误，直到一个语句结束会退出panic模式，忽略中间的错误）
 } Parser;
 
 /**
@@ -39,10 +40,12 @@ typedef enum {
 
 // ParseRule代表一种token对应的前缀、中缀parser函数和优先级
 typedef struct {
-    // 前缀解析函数。指一个token作为表达式前缀的时候的解析函数。如 ！作为前缀可以组成否定表达式，prefix函数是 unary，一元表达式
-    ParseFn prefix; 
-    // 中缀解析函数。指一个token作为表达式中缀的时候的解析函数。如 +，作为中缀可以组成一个二元表达式，对应的infix函数就是binary
-    ParseFn infix;  
+    // 前缀解析函数。指一个token作为表达式前缀的时候的解析函数。如
+    // ！作为前缀可以组成否定表达式，prefix函数是 unary，一元表达式
+    ParseFn prefix;
+    // 中缀解析函数。指一个token作为表达式中缀的时候的解析函数。如
+    // +，作为中缀可以组成一个二元表达式，对应的infix函数就是binary
+    ParseFn infix;
     // 优先级。
     Precedence precedence;
 } ParseRule;
@@ -51,7 +54,13 @@ typedef struct {
 typedef struct {
     Token name;  // 变量token名称
     int depth;   // 作用域深度。0代表全局变量
+    bool isCaptured; // 是否被其他函数当做了闭包变量使用
 } Local;
+
+typedef struct {
+    uint8_t index;
+    bool isLocal;
+} Upvalue;
 
 // 函数类型
 typedef enum {
@@ -60,16 +69,17 @@ typedef enum {
 } FunctionType;
 
 // 正在执行的Compiler
-typedef struct {
+typedef struct Compiler {
     // Compiler栈，指向上一层函数的Compiler。每解析到一个函数会新建一个专用compiler，记录上一层的，杰希望之后会还原。
-    struct Compiler* enclosing;  
+    struct Compiler* enclosing;
 
     ObjFunction* function;  // 函数对象
     FunctionType type;      // 函数类型
 
     Local locals[UINT8_COUNT];  // 本地变量列表
     int localCount;             // 本地变量数量
-    int scopeDepth;             // 作用域深度
+    Upvalue upvalues[UINT8_COUNT];
+    int scopeDepth;  // 作用域深度
 } Compiler;
 
 Parser parser;
@@ -262,12 +272,14 @@ static void initCompiler(Compiler* compiler, FunctionType type) {
     Local* local = &current->locals[current->localCount++];
     local->depth = 0;
     local->name.start = "";
+    local->isCaptured = false;
     local->name.length = 0;
 }
 
 // 结束编译，返回函数对象
 static ObjFunction* endCompiler() {
-    // 所有函数后面都默认返回nil。如果前面的body里面已经有return, 则会在执行中跳过默认的return nil
+    // 所有函数后面都默认返回nil。如果前面的body里面已经有return,
+    // 则会在执行中跳过默认的return nil
     emitReturn();
     ObjFunction* function = current->function;
 #ifdef DEBUG_PRINT_CODE
@@ -296,7 +308,12 @@ static void endScope() {
     while (current->localCount > 0 &&
            current->locals[current->localCount - 1].depth >
                current->scopeDepth) {
-        emitByte(OP_POP);
+        // 如果被函数当做闭包变量来用，不能直接pop
+        if (current->locals[current->localCount - 1].isCaptured) {
+            emitByte(OP_CLOSE_UPVALUE);
+        } else {
+            emitByte(OP_POP);
+        }
         current->localCount--;
     }
 }
@@ -333,6 +350,41 @@ static int resolveLocal(Compiler* compiler, Token* name) {
     return -1;
 }
 
+// 函数的upvalues数组中新增一个Upvalue，返回索引。如果存在返回旧索引
+static int addUpvalue(Compiler* compiler, uint8_t index, bool isLocal) {
+    int upvalueCount = compiler->function->upvalueCount;
+
+    for (int i = 0; i < upvalueCount; i++) {
+        Upvalue* upvalue = &compiler->upvalues[i];
+        if (upvalue->index == index && upvalue->isLocal == isLocal) {
+            return i;
+        }
+    }
+
+    compiler->upvalues[upvalueCount].isLocal = isLocal;
+    compiler->upvalues[upvalueCount].index = index;
+    return compiler->function->upvalueCount++;
+}
+
+// 尝试解析闭包变量。依次向上级函数寻找本地变量
+static int resolveUpvalue(Compiler* compiler, Token* name) {
+    if (compiler->enclosing == NULL)
+        return -1;
+
+    int local = resolveLocal(compiler->enclosing, name);
+    if (local != -1) {
+        compiler->enclosing->locals[local].isCaptured = true;
+        return addUpvalue(compiler, (uint8_t)local, true);
+    }
+
+    int upvalue = resolveUpvalue(compiler->enclosing, name);
+    if (upvalue != -1) {
+        return addUpvalue(compiler, (uint8_t)upvalue, false);
+    }
+
+    return -1;
+}
+
 // 将本地变量加入到变量列表中
 static void addLocal(Token name) {
     if (current->localCount == UINT8_COUNT) {
@@ -344,6 +396,7 @@ static void addLocal(Token name) {
     // 深度先设置为 -1，表明还未定义，只是先声明了一下。防止 var a = a + 1;
     // 这种语法
     local->depth = -1;
+    local->isCaptured = false;
 }
 
 // 声明变量
@@ -368,7 +421,6 @@ static void declareVariable() {
     // 加入到本地变量列表中
     addLocal(*name);
 }
-
 
 // 定义变量名称，把字符串名称放入常量池，后面只使用常量池索引
 static uint8_t parseVariable(const char* errorMessage) {
@@ -563,6 +615,10 @@ static void namedVariable(Token name, bool canAssign) {
         // 就是当前scope中第一个变量的值，本地变量的名称甚至不用出现。
         getOp = OP_GET_LOCAL;
         setOp = OP_SET_LOCAL;
+    } else if ((arg = resolveUpvalue(current, &name)) != -1) {
+        // 查看是不是闭包变量
+        getOp = OP_GET_UPVALUE;
+        setOp = OP_SET_UPVALUE;
     } else {
         // 全局变量，arg是变量在常量池中的索引，运行时需要先获取变量名称，然后去全局变量哈希表中查找值
         arg = identifierConstant(&name);
@@ -604,8 +660,6 @@ static void unary(bool canAssign) {
             return;  // Unreachable.
     }
 }
-
-
 
 // token类型和所属的前缀，中缀解析方法，优先级对应关系
 ParseRule rules[] = {
@@ -655,7 +709,8 @@ ParseRule rules[] = {
 // 1 + 2 * 3
 // 首先遇到1，按数字解析，放入chunk。后面遇到更大优先级的+，继续获取+的中缀方法binary，执行binary，
 // 看看后面是否有更高优先级的token，有的话放入chunk，最后放入自己的操作符。
-// chunk里的元素应该是: 1 2 3 * + 。 放入栈中的之后的顺序是：3 2 1, 计算是先取* 取出2和3，相乘放6进入栈，再取6和1，相加
+// chunk里的元素应该是: 1 2 3 * + 。 放入栈中的之后的顺序是：3 2 1, 计算是先取*
+// 取出2和3，相乘放6进入栈，再取6和1，相加
 static void parsePrecedence(Precedence precedence) {
     advance();  // 前进一个token
     // 获取上个一个(当前操作的)token的前缀parse方法。任何一个token只少属于一个前缀表达式
@@ -668,12 +723,11 @@ static void parsePrecedence(Precedence precedence) {
     bool canAssign = precedence <= PREC_ASSIGNMENT;
     prefixRule(canAssign);
 
-    // 后面一个token如果优先级更高，则和前面处理过的那些token共同组成一个中缀表达式。while是为了后面有多个高优先级中缀表达式，比如：1 + 2 * 3 / 6  解析成指令：1 2 3 * 6 / + 
-    // 执行步骤1：栈：3 2 1   指令： * 6 、 +
-    // 执行步骤2：栈：6 1     指令： 6 / +
-    // 执行步骤3：栈：6 6 1   指令: / +
+    // 后面一个token如果优先级更高，则和前面处理过的那些token共同组成一个中缀表达式。while是为了后面有多个高优先级中缀表达式，比如：1
+    // + 2 * 3 / 6  解析成指令：1 2 3 * 6 / + 执行步骤1：栈：3 2 1   指令： * 6
+    // 、 + 执行步骤2：栈：6 1     指令： 6 / + 执行步骤3：栈：6 6 1   指令: / +
     // 执行步骤4：栈：1 1     指令: +
-    // 执行步骤5：栈：2       指令: 
+    // 执行步骤5：栈：2       指令:
     while (precedence <= getRule(parser.current.type)->precedence) {
         advance();  // 消费一个token
         // 获取中缀解析方法
@@ -687,7 +741,6 @@ static void parsePrecedence(Precedence precedence) {
         error("Invalid assignment target.");
     }
 }
-
 
 static ParseRule* getRule(TokenType type) {
     return &rules[type];
@@ -736,8 +789,16 @@ static void function(FunctionType type) {
 
     // 返回函数对象
     ObjFunction* function = endCompiler();
-    // 函数对象放入常量池
-    emitBytes(OP_CONSTANT, makeConstant(OBJ_VAL(function)));
+    // 函数对象放入常量池。每个函数都被包装成一个闭包函数
+    emitBytes(OP_CLOSURE, makeConstant(OBJ_VAL(function)));
+
+    // 后面跟闭包变量
+    for (int i = 0; i < function->upvalueCount; i++) {
+        // 是否是上级函数的变量，或者上上级的
+        emitByte(compiler.upvalues[i].isLocal ? 1 : 0);
+        // 变量的索引
+        emitByte(compiler.upvalues[i].index);
+    }
 }
 
 // 函数声明

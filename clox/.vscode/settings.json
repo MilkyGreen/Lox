@@ -1,3 +1,31 @@
 {
-    "editor.fontSize": 16
+    "editor.fontSize": 16,
+    "files.associations": {
+        "__bit_reference": "c",
+        "__functional_base": "c",
+        "__node_handle": "c",
+        "algorithm": "c",
+        "atomic": "c",
+        "bitset": "c",
+        "chrono": "c",
+        "__memory": "c",
+        "optional": "c",
+        "functional": "c",
+        "iterator": "c",
+        "limits": "c",
+        "locale": "c",
+        "memory": "c",
+        "ratio": "c",
+        "system_error": "c",
+        "tuple": "c",
+        "type_traits": "c",
+        "vector": "c",
+        "__config": "c",
+        "__debug": "c",
+        "__functional_03": "c",
+        "__hash_table": "c",
+        "exception": "c",
+        "string": "c",
+        "complex": "c"
+    }
 }

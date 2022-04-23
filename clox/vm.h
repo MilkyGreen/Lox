@@ -9,7 +9,7 @@
 
 // 函数调用帧，记录一个函数在执行中的状态
 typedef struct {
-    ObjFunction* function;  // 函数对象
+    ObjClosure* closure;  // 函数对象
     uint8_t* ip;  // 函数执行到的指令位置。如果发生嵌套函数调用，内部函数调用完成之后，需要回到这里继续执行。
     Value* slots;  // 该函数在VM的执行栈中的可用位置。 每一次函数调用都会在VM的栈上开辟一个「窗口」，上面存放函数自己产生的入参、变量、值等，执行完了会丢弃掉。
 } CallFrame;
@@ -22,6 +22,7 @@ typedef struct {
     Value* stackTop;         // 栈顶元素（下一个空位置）
     Table strings;  // 字符串缓存哈希表。运行时会缓存所有的字符串，相同的字符串会使用同一个对象。
     Table globals;  // 全局变量
+    ObjUpvalue* openUpvalues;
     Obj*
         objects;  // Obj链表，保存VM中所有的Obj对象引用，VM退出的时候释放掉这些内存
 } VM;
