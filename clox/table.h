@@ -86,4 +86,9 @@ ObjString* tableFindString(Table* table,
                            int length,
                            uint32_t hash);
 
+void tableRemoveWhite(Table* table);
+
+// GC标记哈希表
+void markTable(Table* table);
+
 #endif

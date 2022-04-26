@@ -33,6 +33,7 @@ typedef enum {
 // Obj类型，代表lox中的一个对象实例
 struct Obj {
     ObjType type;      // 对象类型
+    bool isMarked; // 是否被CG检测标记为存活
     struct Obj* next;  // VM中的所有对象链表，方便清除内存
 };
 

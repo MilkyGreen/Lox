@@ -42,6 +42,21 @@
  */
 void *reallocate(void *pointer, size_t oldSize, size_t newSize);
 
+void markObject(Obj* object);
+
+/**
+ * @brief 以value为根节点开始标记存活对象
+ * 
+ * @param value 
+ */
+void markValue(Value value);
+
+/**
+ * @brief 内存垃圾回收
+ * 
+ */
+void collectGarbage();
+
 void freeObjects();
 
 #endif

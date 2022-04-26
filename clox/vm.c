@@ -69,6 +69,14 @@ static void defineNative(const char* name, NativeFn function) {
 
 void initVM() {
     vm.objects = NULL;
+
+    vm.bytesAllocated = 0;
+    vm.nextGC = 1024 * 1024;  // 默认GC触发值
+
+    vm.grayCount = 0;
+    vm.grayCapacity = 0;
+    vm.grayStack = NULL;
+
     initTable(&vm.globals);
     initTable(&vm.strings);              // 初始化字符串缓存哈希表
     defineNative("clock", clockNative);  // 定义一个native函数
@@ -193,8 +201,8 @@ static bool isFalsey(Value value) {
 // 字符串连接操作
 static void concatenate() {
     // 先取出两个字符串对象
-    ObjString* b = AS_STRING(pop());
-    ObjString* a = AS_STRING(pop());
+    ObjString* b = AS_STRING(peek(0));
+    ObjString* a = AS_STRING(peek(1));
     // 计算新的长度
     int length = a->length + b->length;
     // 开辟新的字符数组空间
@@ -205,6 +213,9 @@ static void concatenate() {
     chars[length] = '\0';
     // 用新字符串生成ObjString
     ObjString* result = takeString(chars, length);
+    // 最后再pop，防止pop的早过程中GC触发
+    pop();
+    pop();
     push(OBJ_VAL(result));
 }
 
@@ -456,7 +467,7 @@ static InterpretResult run() {
             case OP_CLOSE_UPVALUE:
                 // 将一个栈上的本地变量，转入heap，作为闭包变量
                 closeUpvalues(vm.stackTop - 1);
-                pop(); // 还是要从栈里pop出去
+                pop();  // 还是要从栈里pop出去
                 break;
             case OP_RETURN: {
                 // 获取返回值

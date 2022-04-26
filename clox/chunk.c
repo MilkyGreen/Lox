@@ -1,6 +1,7 @@
 #include "chunk.h"
 #include <stdlib.h>
 #include "memory.h"
+#include "vm.h"
 
 void initChunk(Chunk* chunk) {
     chunk->count = 0;
@@ -42,8 +43,11 @@ void freeChunk(Chunk* chunk) {
 }
 
 int addConstant(Chunk* chunk, Value value) {
+    // 先向VM的栈中push再pop，防止过程中GC回收
+    push(value);
     // 向数组中写入常量值
     writeValueArray(&chunk->constants, value);
+    pop();
     // 返回改常量在数组中的索引
     return chunk->constants.count - 1;
 }

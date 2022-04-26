@@ -159,7 +159,7 @@ ObjString* tableFindString(Table* table,
             // 如果找到了非墓碑空节点，停止遍历.
             if (IS_NIL(entry->value))
                 return NULL;
-                // 比较长度、hash、char数组，都相当时任务是相同字符串
+            // 比较长度、hash、char数组，都相当时任务是相同字符串
         } else if (entry->key->length == length && entry->key->hash == hash &&
                    memcmp(entry->key->chars, chars, length) == 0) {
             // We found it.
@@ -167,5 +167,24 @@ ObjString* tableFindString(Table* table,
         }
 
         index = (index + 1) % table->capacity;
+    }
+}
+
+// 把GC没标记的字符串从哈希表中删除
+void tableRemoveWhite(Table* table) {
+    for (int i = 0; i < table->capacity; i++) {
+        Entry* entry = &table->entries[i];
+        if (entry->key != NULL && !entry->key->obj.isMarked) {
+            tableDelete(table, entry->key);
+        }
+    }
+}
+
+// GC 标记哈希表
+void markTable(Table* table) {
+    for (int i = 0; i < table->capacity; i++) {
+        Entry* entry = &table->entries[i];
+        markObject((Obj*)entry->key);
+        markValue(entry->value);
     }
 }

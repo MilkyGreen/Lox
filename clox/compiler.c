@@ -4,6 +4,7 @@
 
 #include "common.h"
 #include "compiler.h"
+#include "memory.h"
 #include "scanner.h"
 #ifdef DEBUG_PRINT_CODE
 #include "debug.h"
@@ -52,9 +53,9 @@ typedef struct {
 
 // 本地变量结构
 typedef struct {
-    Token name;  // 变量token名称
-    int depth;   // 作用域深度。0代表全局变量
-    bool isCaptured; // 是否被其他函数当做了闭包变量使用
+    Token name;       // 变量token名称
+    int depth;        // 作用域深度。0代表全局变量
+    bool isCaptured;  // 是否被其他函数当做了闭包变量使用
 } Local;
 
 typedef struct {
@@ -1069,4 +1070,14 @@ ObjFunction* compile(const char* source) {
     }
     ObjFunction* function = endCompiler();
     return parser.hadError ? NULL : function;
+}
+
+// GC 标记使用中的对象
+void markCompilerRoots() {
+    Compiler* compiler = current;
+    while (compiler != NULL) {
+        // 编译阶段的function对象需要被标记
+        markObject((Obj*)compiler->function);
+        compiler = compiler->enclosing;
+    }
 }
