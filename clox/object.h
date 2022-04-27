@@ -2,19 +2,25 @@
 #define clox_object_h
 
 #include "chunk.h"
+#include "table.h"
 #include "common.h"
 #include "value.h"
 
 // 获取对象的类型
 #define OBJ_TYPE(value) (AS_OBJ(value)->type)
+#define IS_CLASS(value) isObjType(value, OBJ_CLASS)
 #define IS_CLOSURE(value) isObjType(value, OBJ_CLOSURE)
 #define IS_FUNCTION(value) isObjType(value, OBJ_FUNCTION)
+#define IS_INSTANCE(value)     isObjType(value, OBJ_INSTANCE)
 #define IS_NATIVE(value) isObjType(value, OBJ_NATIVE)
 // 是否是个string对象
 #define IS_STRING(value) isObjType(value, OBJ_STRING)
 
+
+#define AS_CLASS(value) ((ObjClass*)AS_OBJ(value))
 #define AS_CLOSURE(value) ((ObjClosure*)AS_OBJ(value))
 #define AS_FUNCTION(value) ((ObjFunction*)AS_OBJ(value))
+#define AS_INSTANCE(value)     ((ObjInstance*)AS_OBJ(value))
 #define AS_NATIVE(value) (((ObjNative*)AS_OBJ(value))->function)
 // Object转成ObjString
 #define AS_STRING(value) ((ObjString*)AS_OBJ(value))
@@ -23,8 +29,10 @@
 
 // 对象类型 string instence function 等等
 typedef enum {
+    OBJ_CLASS,
     OBJ_CLOSURE,
     OBJ_FUNCTION,
+    OBJ_INSTANCE,
     OBJ_NATIVE,
     OBJ_STRING,
     OBJ_UPVALUE
@@ -33,17 +41,17 @@ typedef enum {
 // Obj类型，代表lox中的一个对象实例
 struct Obj {
     ObjType type;      // 对象类型
-    bool isMarked; // 是否被CG检测标记为存活
+    bool isMarked;     // 是否被CG检测标记为存活
     struct Obj* next;  // VM中的所有对象链表，方便清除内存
 };
 
 // 函数对象
 typedef struct {
     Obj obj;
-    int arity;  // 函数入参数量
-    int upvalueCount; // 函数里有几个闭包变量
-    Chunk chunk;      // 函数的所有指令
-    ObjString* name;  // 函数名称
+    int arity;         // 函数入参数量
+    int upvalueCount;  // 函数里有几个闭包变量
+    Chunk chunk;       // 函数的所有指令
+    ObjString* name;   // 函数名称
 } ObjFunction;
 
 // 定义 NativeFn 函数
@@ -68,21 +76,38 @@ struct ObjString {
 typedef struct ObjUpvalue {
     Obj obj;
     Value* location;  // 变量值指针
-    Value closed;  
+    Value closed;
     struct ObjUpvalue* next;
 } ObjUpvalue;
 
 // 闭包函数对象。包含函数本身和引用上级函数的变量列表（ObjUpvalue）
 typedef struct {
     Obj obj;
-    ObjFunction* function; // 关联的函数
+    ObjFunction* function;  // 关联的函数
     ObjUpvalue** upvalues;  // 闭包变量值指针数组，记录了函数的所有的闭包变量
     int upvalueCount;
 } ObjClosure;
 
+// 类
+typedef struct {
+    Obj obj;
+    ObjString* name;  // 类名
+} ObjClass;
+
+// 对象实例
+typedef struct {
+  Obj obj;
+  ObjClass* klass; // 类
+  Table fields;  // 字段哈希表
+} ObjInstance;
+
+ObjClass* newClass(ObjString* name);
+
 ObjClosure* newClosure(ObjFunction* function);
 
 ObjFunction* newFunction();
+
+ObjInstance* newInstance(ObjClass* klass);
 
 ObjNative* newNative(NativeFn function);
 

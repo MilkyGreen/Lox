@@ -18,6 +18,8 @@ typedef enum {
     OP_SET_GLOBAL,  // 全局变量设置，后面通常跟全局变量的名称
     OP_GET_UPVALUE,
     OP_SET_UPVALUE,
+    OP_GET_PROPERTY,
+    OP_SET_PROPERTY,
     OP_EQUAL,          //  =
     OP_GREATER,        // >
     OP_LESS,           // <
@@ -35,6 +37,7 @@ typedef enum {
     OP_CLOSURE,
     OP_CLOSE_UPVALUE,
     OP_RETURN,  // 返回
+    OP_CLASS,
 } OpCode;
 
 // 代表一段被编译后的代码

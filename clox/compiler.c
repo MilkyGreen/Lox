@@ -540,6 +540,23 @@ static void call(bool canAssign) {
     emitBytes(OP_CALL, argCount);
 }
 
+// 点代表对象字段的获取或者赋值
+static void dot(bool canAssign) {
+    // 后面跟字段名称
+    consume(TOKEN_IDENTIFIER, "Expect property name after '.'.");
+    uint8_t name = identifierConstant(&parser.previous);
+
+    // 如果有等号且可以赋值，说明是字段赋值
+    if (canAssign && match(TOKEN_EQUAL)) {
+        // 解析值表达式
+        expression();
+        emitBytes(OP_SET_PROPERTY, name);
+    } else {
+        // 否者是字段获取
+        emitBytes(OP_GET_PROPERTY, name);
+    }
+}
+
 /**
  * @brief 解析字面量token，放入chunk
  *
@@ -669,7 +686,7 @@ ParseRule rules[] = {
     [TOKEN_LEFT_BRACE] = {NULL, NULL, PREC_NONE},
     [TOKEN_RIGHT_BRACE] = {NULL, NULL, PREC_NONE},
     [TOKEN_COMMA] = {NULL, NULL, PREC_NONE},
-    [TOKEN_DOT] = {NULL, NULL, PREC_NONE},
+    [TOKEN_DOT] = {NULL, dot, PREC_CALL},
     [TOKEN_MINUS] = {unary, binary, PREC_TERM},
     [TOKEN_PLUS] = {NULL, binary, PREC_TERM},
     [TOKEN_SEMICOLON] = {NULL, NULL, PREC_NONE},
@@ -800,6 +817,20 @@ static void function(FunctionType type) {
         // 变量的索引
         emitByte(compiler.upvalues[i].index);
     }
+}
+
+// 类声明
+static void classDeclaration() {
+    consume(TOKEN_IDENTIFIER, "Expect class name.");
+    uint8_t nameConstant = identifierConstant(&parser.previous);
+    declareVariable();
+
+    emitBytes(OP_CLASS, nameConstant);
+    // 类名相当于全局变量
+    defineVariable(nameConstant);
+
+    consume(TOKEN_LEFT_BRACE, "Expect '{' before class body.");
+    consume(TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
 }
 
 // 函数声明
@@ -1011,7 +1042,9 @@ static void synchronize() {
 
 // 处理declaration
 static void declaration() {
-    if (match(TOKEN_FUN)) {
+    if (match(TOKEN_CLASS)) {
+        classDeclaration();
+    } else if (match(TOKEN_FUN)) {
         funDeclaration();
     } else if (match(TOKEN_VAR)) {
         // 变量定义声明
