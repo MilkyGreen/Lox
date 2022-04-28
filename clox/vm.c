@@ -78,7 +78,11 @@ void initVM() {
     vm.grayStack = NULL;
 
     initTable(&vm.globals);
-    initTable(&vm.strings);              // 初始化字符串缓存哈希表
+    initTable(&vm.strings);  // 初始化字符串缓存哈希表
+
+    vm.initString = NULL;
+    vm.initString = copyString("init", 4);
+
     defineNative("clock", clockNative);  // 定义一个native函数
     resetStack();
 }
@@ -86,6 +90,7 @@ void initVM() {
 void freeVM() {
     freeTable(&vm.globals);
     freeTable(&vm.strings);
+    vm.initString = NULL;
     // 释放所有对象占用的内存
     freeObjects();
 }
@@ -136,12 +141,29 @@ static bool call(ObjClosure* closure, int argCount) {
 static bool callValue(Value callee, int argCount) {
     if (IS_OBJ(callee)) {
         switch (OBJ_TYPE(callee)) {
+            case OBJ_BOUND_METHOD: {
+                ObjBoundMethod* bound = AS_BOUND_METHOD(callee);
+                // 把 this 占据的位置设置为实例对象
+                vm.stackTop[-argCount - 1] = bound->receiver;
+                // 直接调用方法的函数对象
+                return call(bound->method, argCount);
+            }
             case OBJ_CLASS: {
                 // 被调用的是一个类，new一个对象实例
                 ObjClass* klass = AS_CLASS(callee);
                 // 放到原来callee的位置
                 vm.stackTop[-argCount - 1] = OBJ_VAL(newInstance(klass));
-                return true;
+
+                // 类的init方法
+                Value initializer;
+                if (tableGet(&klass->methods, vm.initString, &initializer)) {
+                    // 如果有init方法，调用
+                    return call(AS_CLOSURE(initializer), argCount);
+                } else if (argCount != 0) {
+                    // 没有init函数却传了入参
+                    runtimeError("Expected 0 arguments but got %d.", argCount);
+                    return false;
+                }
             }
             case OBJ_CLOSURE:
                 return call(AS_CLOSURE(callee), argCount);
@@ -161,6 +183,71 @@ static bool callValue(Value callee, int argCount) {
     }
     runtimeError("Can only call functions and classes.");
     return false;
+}
+
+// 调用类的方法
+static bool invokeFromClass(ObjClass* klass, ObjString* name, int argCount) {
+    Value method;
+    // 获取方法函数体
+    if (!tableGet(&klass->methods, name, &method)) {
+        runtimeError("Undefined property '%s'.", name->chars);
+        return false;
+    }
+    // 调用函数
+    return call(AS_CLOSURE(method), argCount);
+}
+
+// 方法直接调用
+static bool invoke(ObjString* name, int argCount) {
+    // 获取实例对象（中间隔了argCount个入参）
+    Value receiver = peek(argCount);
+    // 只有类实例可以调用方法
+    if (!IS_INSTANCE(receiver)) {
+        runtimeError("Only instances have methods.");
+        return false;
+    }
+    // 类型转换
+    ObjInstance* instance = AS_INSTANCE(receiver);
+
+    Value value;
+    // 如果name是一个字段（字段的类型有可能是函数），先按字段来处理。执行字段对应的函数。比如下面的情况
+    /**
+     * @brief 
+     * class Oops {
+        init() {
+            fun f() {
+            print "not a method";
+            }
+
+            this.field = f;
+        }
+        }
+
+        var oops = Oops();
+        oops.field();
+     *
+     */
+    if (tableGet(&instance->fields, name, &value)) {
+        vm.stackTop[-argCount - 1] = value;
+        return callValue(value, argCount);
+    }
+
+    return invokeFromClass(instance->klass, name, argCount);
+}
+
+// 将函数绑定到实例呢
+static bool bindMethod(ObjClass* klass, ObjString* name) {
+    Value method;
+    // 先获取类的方法对象
+    if (!tableGet(&klass->methods, name, &method)) {
+        runtimeError("Undefined property '%s'.", name->chars);
+        return false;
+    }
+    // 将实例peek出来，和方法绑定到一起
+    ObjBoundMethod* bound = newBoundMethod(peek(0), AS_CLOSURE(method));
+    pop();                 // 类实例pop出来
+    push(OBJ_VAL(bound));  // 方法对象放入栈
+    return true;
 }
 
 // 通过本地变量获取闭包变量
@@ -199,6 +286,18 @@ static void closeUpvalues(Value* last) {
         upvalue->location = &upvalue->closed;
         vm.openUpvalues = upvalue->next;
     }
+}
+
+// 定义方法
+static void defineMethod(ObjString* name) {
+    // 方法对象
+    Value method = peek(0);
+    // 类对象
+    ObjClass* klass = AS_CLASS(peek(1));
+    // 方法绑定到类的哈希表中
+    tableSet(&klass->methods, name, method);
+    // 方法对象pop出来
+    pop();
 }
 
 static bool isFalsey(Value value) {
@@ -385,9 +484,13 @@ static InterpretResult run() {
                     push(value);  // 把字段值放进去
                     break;
                 }
-                // 获取到了未定义的字段，报错
-                runtimeError("Undefined property '%s'.", name->chars);
-                return INTERPRET_RUNTIME_ERROR;
+
+                // 如果字段没获取到，尝试获取方法。这里需要把类实例和方法体绑定起来。
+                if (!bindMethod(instance->klass, name)) {
+                    // 方法也获取不到抛出异常
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                break;
             }
             case OP_SET_PROPERTY: {
                 if (!IS_INSTANCE(peek(1))) {
@@ -490,6 +593,19 @@ static InterpretResult run() {
                 frame = &vm.frames[vm.frameCount - 1];
                 break;
             }
+            case OP_INVOKE: {
+                // 方法直接调用 instance.method()
+                // 方法名
+                ObjString* method = READ_STRING();
+                // 入参数量
+                int argCount = READ_BYTE();
+                if (!invoke(method, argCount)) {
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                // 设置为方法的frame
+                frame = &vm.frames[vm.frameCount - 1];
+                break;
+            }
             case OP_CLOSURE: {
                 // 闭包函数声明指令
                 // 将函数对象包装成闭包对象
@@ -542,6 +658,10 @@ static InterpretResult run() {
                 // 类声明，创建一个类对象，放入栈中。
                 // 后续defineVariable()函数会把这个类对象变成一个全局变量来处理
                 push(OBJ_VAL(newClass(READ_STRING())));
+                break;
+            case OP_METHOD:
+                // 方法定义。读取方法名
+                defineMethod(READ_STRING());
                 break;
         }
     }

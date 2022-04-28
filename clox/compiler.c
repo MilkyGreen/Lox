@@ -65,8 +65,10 @@ typedef struct {
 
 // 函数类型
 typedef enum {
-    TYPE_FUNCTION,  // 函数
-    TYPE_SCRIPT     // 全局（整个lox脚本也认为是一个函数）
+    TYPE_FUNCTION,     // 函数
+    TYPE_METHOD,       // 方法（绑定到类实例的函数）
+    TYPE_INITIALIZER,  // 类的初始化方法
+    TYPE_SCRIPT        // 全局（整个lox脚本也认为是一个函数）
 } FunctionType;
 
 // 正在执行的Compiler
@@ -83,10 +85,17 @@ typedef struct Compiler {
     int scopeDepth;  // 作用域深度
 } Compiler;
 
+// 当前正在编译的类
+typedef struct ClassCompiler {
+    struct ClassCompiler* enclosing;  // 上一层的类
+} ClassCompiler;
+
 Parser parser;
 
 // 当前Compiler对象引用
 Compiler* current = NULL;
+
+ClassCompiler* currentClass = NULL;
 
 // 获取当前的指令数组
 static Chunk* currentChunk() {
@@ -208,11 +217,18 @@ static int emitJump(uint8_t instruction) {
 
 // 写入一个return指令
 static void emitReturn() {
-    // 默认return nil
-    emitByte(OP_NIL);
+    // init方法默认返回类实例
+    if (current->type == TYPE_INITIALIZER) {
+        // 执行init方法时，栈0中的位置是类实例
+        emitBytes(OP_GET_LOCAL, 0);
+    } else {
+        // 否则默认返回一个nil
+        emitByte(OP_NIL);
+    }
     emitByte(OP_RETURN);
 }
 
+// 值放入常量池，返回索引
 static uint8_t makeConstant(Value value) {
     int constant = addConstant(currentChunk(), value);
     if (constant > UINT8_MAX) {
@@ -272,9 +288,15 @@ static void initCompiler(Compiler* compiler, FunctionType type) {
     // 当前compiler的第一个Local留给VM自己用
     Local* local = &current->locals[current->localCount++];
     local->depth = 0;
-    local->name.start = "";
     local->isCaptured = false;
-    local->name.length = 0;
+    if (type != TYPE_FUNCTION) {
+        // 如果是处于方法中，第一个本地变量的位置留给this关键字，值会是对象实例
+        local->name.start = "this";
+        local->name.length = 4;
+    } else {
+        local->name.start = "";
+        local->name.length = 0;
+    }
 }
 
 // 结束编译，返回函数对象
@@ -551,6 +573,12 @@ static void dot(bool canAssign) {
         // 解析值表达式
         expression();
         emitBytes(OP_SET_PROPERTY, name);
+    } else if (match(TOKEN_LEFT_PAREN)) {
+        // 如果点后面的indetifer带括号,是方法调用
+        uint8_t argCount = argumentList();
+        // 方法调用
+        emitBytes(OP_INVOKE, name);
+        emitByte(argCount);
     } else {
         // 否者是字段获取
         emitBytes(OP_GET_PROPERTY, name);
@@ -659,6 +687,16 @@ static void variable(bool canAssign) {
     namedVariable(parser.previous, canAssign);
 }
 
+// 方法中的this，当做一个本地变量，值就是对象实例
+static void this_(bool canAssign) {
+    if (currentClass == NULL) {
+        // 不在类中
+        error("Can't use 'this' outside of a class.");
+        return;
+    }
+    variable(false);
+}
+
 // 处理一元操作
 static void unary(bool canAssign) {
     TokenType operatorType = parser.previous.type;
@@ -715,7 +753,7 @@ ParseRule rules[] = {
     [TOKEN_PRINT] = {NULL, NULL, PREC_NONE},
     [TOKEN_RETURN] = {NULL, NULL, PREC_NONE},
     [TOKEN_SUPER] = {NULL, NULL, PREC_NONE},
-    [TOKEN_THIS] = {NULL, NULL, PREC_NONE},
+    [TOKEN_THIS] = {this_, NULL, PREC_NONE},
     [TOKEN_TRUE] = {literal, NULL, PREC_NONE},
     [TOKEN_VAR] = {NULL, NULL, PREC_NONE},
     [TOKEN_WHILE] = {NULL, NULL, PREC_NONE},
@@ -819,9 +857,29 @@ static void function(FunctionType type) {
     }
 }
 
+// 解析类方法
+static void method() {
+    consume(TOKEN_IDENTIFIER, "Expect method name.");
+    uint8_t constant = identifierConstant(&parser.previous);
+
+    FunctionType type = TYPE_METHOD;
+
+    if (parser.previous.length == 4 &&
+        memcmp(parser.previous.start, "init", 4) == 0) {
+        // 是一个初始化方法
+        type = TYPE_INITIALIZER;
+    }
+
+    // 按函数来解析方法体
+    function(type);
+    // 方法指令，会把函数包装成方法
+    emitBytes(OP_METHOD, constant);
+}
+
 // 类声明
 static void classDeclaration() {
     consume(TOKEN_IDENTIFIER, "Expect class name.");
+    Token className = parser.previous;
     uint8_t nameConstant = identifierConstant(&parser.previous);
     declareVariable();
 
@@ -829,8 +887,22 @@ static void classDeclaration() {
     // 类名相当于全局变量
     defineVariable(nameConstant);
 
+    // 表明当前处于类中
+    ClassCompiler classCompiler;
+    classCompiler.enclosing = currentClass;
+    currentClass = &classCompiler;
+
+    // 解析一下类名，以便运行时栈中放到方法之前
+    namedVariable(className, false);
     consume(TOKEN_LEFT_BRACE, "Expect '{' before class body.");
+    while (!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
+        method();
+    }
     consume(TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
+    // 把类pop出栈
+    emitByte(OP_POP);
+
+    currentClass = currentClass->enclosing;
 }
 
 // 函数声明
@@ -982,9 +1054,14 @@ static void returnStatement() {
         error("Can't return from top-level code.");
     }
     if (match(TOKEN_SEMICOLON)) {
-        // 没有返回值的话直接return
+        // 没有返回值的话，return默认值
         emitReturn();
     } else {
+        // 如果是init方法，不应该显式的返回任何值
+        if (current->type == TYPE_INITIALIZER) {
+            error("Can't return a value from an initializer.");
+        }
+
         // 解析返回表达式，然后返回
         expression();
         consume(TOKEN_SEMICOLON, "Expect ';' after return value.");

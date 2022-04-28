@@ -27,6 +27,9 @@ typedef struct {
     Table
         strings;  // 字符串缓存哈希表。运行时会缓存所有的字符串，相同的字符串会使用同一个对象。
     Table globals;             // 全局变量
+
+    ObjString* initString; // 类的init方法名
+
     ObjUpvalue* openUpvalues;  // vm中所有的闭包变量
     Obj*
         objects;  // Obj链表，保存VM中所有的Obj对象引用，VM退出的时候释放掉这些内存
