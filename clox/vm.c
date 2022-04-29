@@ -212,7 +212,7 @@ static bool invoke(ObjString* name, int argCount) {
     Value value;
     // 如果name是一个字段（字段的类型有可能是函数），先按字段来处理。执行字段对应的函数。比如下面的情况
     /**
-     * @brief 
+     * @brief
      * class Oops {
         init() {
             fun f() {
@@ -508,6 +508,17 @@ static InterpretResult run() {
                 push(value);
                 break;
             }
+            case OP_GET_SUPER: {
+                // 方法名
+                ObjString* name = READ_STRING();
+                // 父类对象，此时还在栈顶
+                ObjClass* superclass = AS_CLASS(pop());
+                // 从父类中找到方法，然后绑定到子类实例上
+                if (!bindMethod(superclass, name)) {
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                break;
+            }
             case OP_EQUAL: {
                 Value b = pop();
                 Value a = pop();
@@ -606,6 +617,23 @@ static InterpretResult run() {
                 frame = &vm.frames[vm.frameCount - 1];
                 break;
             }
+            case OP_SUPER_INVOKE: {
+                // 父类函数直接调用
+                // 读取方法名
+                ObjString* method = READ_STRING();
+                // 入参数量
+                int argCount = READ_BYTE();
+                // 父类对象在栈顶
+                ObjClass* superclass = AS_CLASS(pop());
+
+                // 调用父类的方法，相当于先获取父类，再OP_CALL。
+                if (!invokeFromClass(superclass, method, argCount)) {
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                // 上面的方法会产生一个新的方法的frame，下一轮loop执行。所需要的入参和变量都在栈中
+                frame = &vm.frames[vm.frameCount - 1];
+                break;
+            }
             case OP_CLOSURE: {
                 // 闭包函数声明指令
                 // 将函数对象包装成闭包对象
@@ -659,6 +687,21 @@ static InterpretResult run() {
                 // 后续defineVariable()函数会把这个类对象变成一个全局变量来处理
                 push(OBJ_VAL(newClass(READ_STRING())));
                 break;
+            case OP_INHERIT: {
+                // 类继承，依次从栈上取出父类和子类
+                Value superclass = peek(1);
+
+                if (!IS_CLASS(superclass)) {
+                    runtimeError("Superclass must be a class.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                ObjClass* subclass = AS_CLASS(peek(0));
+                // 将父类的方法拷贝到子类中
+                tableAddAll(&AS_CLASS(superclass)->methods, &subclass->methods);
+                pop();  // 把子类pop出来
+                // 父类留在栈顶，以供后面super关键字来使用
+                break;
+            }
             case OP_METHOD:
                 // 方法定义。读取方法名
                 defineMethod(READ_STRING());

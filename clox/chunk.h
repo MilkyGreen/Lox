@@ -21,6 +21,7 @@ typedef enum {
     OP_GET_PROPERTY,
     OP_SET_PROPERTY,
     OP_EQUAL,          //  =
+    OP_GET_SUPER,
     OP_GREATER,        // >
     OP_LESS,           // <
     OP_ADD,            // 加法操作
@@ -34,11 +35,13 @@ typedef enum {
     OP_JUMP_IF_FALSE,  // 有条件跳转,当遇到false时会跳过一些指令
     OP_LOOP,           // 循环指令，会跳到之前的指令再执行
     OP_CALL,           // 函数调用
-    OP_INVOKE,          // 方法调用
+    OP_INVOKE,          // 方法直接调用
+    OP_SUPER_INVOKE,    // 父类方法直接调用
     OP_CLOSURE,
     OP_CLOSE_UPVALUE,
     OP_RETURN,  // 返回
     OP_CLASS,
+    OP_INHERIT,
     OP_METHOD
 } OpCode;
 

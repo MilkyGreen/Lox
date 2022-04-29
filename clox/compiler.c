@@ -88,6 +88,7 @@ typedef struct Compiler {
 // 当前正在编译的类
 typedef struct ClassCompiler {
     struct ClassCompiler* enclosing;  // 上一层的类
+    bool hasSuperclass;  // 当前是否处在一个继承类父类的类里
 } ClassCompiler;
 
 Parser parser;
@@ -687,6 +688,49 @@ static void variable(bool canAssign) {
     namedVariable(parser.previous, canAssign);
 }
 
+// 生成一个token
+static Token syntheticToken(const char* text) {
+    Token token;
+    token.start = text;
+    token.length = (int)strlen(text);
+    return token;
+}
+
+// super关键字解析方法
+static void super_(bool canAssign) {
+    if (currentClass == NULL) {
+        error("Can't use 'super' outside of a class.");
+    } else if (!currentClass->hasSuperclass) {
+        error("Can't use 'super' in a class with no superclass.");
+    }
+
+    // 后面跟 点
+    consume(TOKEN_DOT, "Expect '.' after 'super'.");
+    // 后面跟 方法名
+    consume(TOKEN_IDENTIFIER, "Expect superclass method name.");
+    // 解析方法名
+    uint8_t name = identifierConstant(&parser.previous);
+
+    // 获取this关键字对应的实例，获取super关键字对应的父类对象
+    // 因为super.method() ，是用子类的实例调用父类的方法体。因此需要下面两个对象
+    namedVariable(syntheticToken("this"), false);
+
+    if (match(TOKEN_LEFT_PAREN)) {
+        // 如果方法后面跟括号，就是一个直接的调用。
+        // 解析入参数量
+        uint8_t argCount = argumentList();
+        // 父类对象
+        namedVariable(syntheticToken("super"), false);
+        // 父类方法调用指令
+        emitBytes(OP_SUPER_INVOKE, name);
+        emitByte(argCount);
+    } else {
+        // 没跟括号的话，是一个父类方法的获取
+        namedVariable(syntheticToken("super"), false);
+        emitBytes(OP_GET_SUPER, name);
+    }
+}
+
 // 方法中的this，当做一个本地变量，值就是对象实例
 static void this_(bool canAssign) {
     if (currentClass == NULL) {
@@ -752,7 +796,7 @@ ParseRule rules[] = {
     [TOKEN_OR] = {NULL, or_, PREC_OR},
     [TOKEN_PRINT] = {NULL, NULL, PREC_NONE},
     [TOKEN_RETURN] = {NULL, NULL, PREC_NONE},
-    [TOKEN_SUPER] = {NULL, NULL, PREC_NONE},
+    [TOKEN_SUPER] = {super_, NULL, PREC_NONE},
     [TOKEN_THIS] = {this_, NULL, PREC_NONE},
     [TOKEN_TRUE] = {literal, NULL, PREC_NONE},
     [TOKEN_VAR] = {NULL, NULL, PREC_NONE},
@@ -884,13 +928,37 @@ static void classDeclaration() {
     declareVariable();
 
     emitBytes(OP_CLASS, nameConstant);
-    // 类名相当于全局变量
+    // 类相当于全局变量
     defineVariable(nameConstant);
 
     // 表明当前处于类中
     ClassCompiler classCompiler;
+    classCompiler.hasSuperclass = false;
     classCompiler.enclosing = currentClass;
     currentClass = &classCompiler;
+
+    if (match(TOKEN_LESS)) {
+        // 有父类
+        consume(TOKEN_IDENTIFIER, "Expect superclass name.");
+        // 获取一下父类
+        variable(false);
+        // 子类和父类名称不能相同
+        if (identifiersEqual(&className, &parser.previous)) {
+            error("A class can't inherit from itself.");
+        }
+
+        // 开启一个新作用域
+        beginScope();
+        // 作用域里定义一个super的本地变量。此时父类对象就在栈里
+        addLocal(syntheticToken("super"));
+        defineVariable(0);
+
+        // 解析当前类
+        namedVariable(className, false);
+        // 继承指令。运行到这里的时候栈顶上分别是当前类和父类
+        emitByte(OP_INHERIT);
+        classCompiler.hasSuperclass = true;
+    }
 
     // 解析一下类名，以便运行时栈中放到方法之前
     namedVariable(className, false);
@@ -901,6 +969,11 @@ static void classDeclaration() {
     consume(TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
     // 把类pop出栈
     emitByte(OP_POP);
+
+    if (classCompiler.hasSuperclass) {
+        // 如果有父类，结束作用域
+        endScope();
+    }
 
     currentClass = currentClass->enclosing;
 }
