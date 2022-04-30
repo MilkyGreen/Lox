@@ -1,0 +1,2 @@
+#bash
+./main test.lox

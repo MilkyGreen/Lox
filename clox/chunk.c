@@ -12,6 +12,17 @@ void initChunk(Chunk* chunk) {
         &chunk->constants);  // 将constants字段的指针传入函数中，进行初始化
 }
 
+void freeChunk(Chunk* chunk) {
+    // 释放code数组
+    FREE_ARRAY(uint8_t, chunk->code, chunk->capacity);
+    // 释放lines数组
+    FREE_ARRAY(int, chunk->lines, chunk->capacity);
+    // 释放常量
+    freeValueArray(&chunk->constants);
+    // chunk置零
+    initChunk(chunk);
+}
+
 void writeChunk(Chunk* chunk, uint8_t byte, int line) {
     // 判断capacity是否足够放入新指令
     if (chunk->capacity < chunk->count + 1) {
@@ -31,16 +42,7 @@ void writeChunk(Chunk* chunk, uint8_t byte, int line) {
     chunk->count++;
 }
 
-void freeChunk(Chunk* chunk) {
-    // 释放code数组
-    FREE_ARRAY(uint8_t, chunk->code, chunk->capacity);
-    // 释放lines数组
-    FREE_ARRAY(int, chunk->lines, chunk->capacity);
-    // 释放常量
-    freeValueArray(&chunk->constants);
-    // chunk置零
-    initChunk(chunk);
-}
+
 
 int addConstant(Chunk* chunk, Value value) {
     // 先向VM的栈中push再pop，防止过程中GC回收

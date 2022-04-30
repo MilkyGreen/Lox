@@ -1,8 +1,24 @@
-fun fib(n) {
-  if (n < 2) return n;
-  return fib(n - 2) + fib(n - 1);
+
+class Doughnut {
+
+  cook() {
+    print "Dunk in the fryer.";
+    this.finish("sprinkles");
+  }
+
+  finish(ingredient) {
+    print "Finish with " + ingredient;
+  }
 }
 
-var start = clock();
-print fib(35);
-print clock() - start;
+class Cruller < Doughnut {
+  finish(ingredient) {
+    // No sprinkles, always icing.
+    super.finish("icing");
+  }
+}
+
+var d = Doughnut();
+d.cook();
+
+Cruller().finish("aa");

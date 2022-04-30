@@ -68,6 +68,9 @@ static void defineNative(const char* name, NativeFn function) {
 }
 
 void initVM() {
+
+    resetStack();
+
     vm.objects = NULL;
 
     vm.bytesAllocated = 0;
@@ -84,7 +87,7 @@ void initVM() {
     vm.initString = copyString("init", 4);
 
     defineNative("clock", clockNative);  // 定义一个native函数
-    resetStack();
+    
 }
 
 void freeVM() {
@@ -164,6 +167,7 @@ static bool callValue(Value callee, int argCount) {
                     runtimeError("Expected 0 arguments but got %d.", argCount);
                     return false;
                 }
+                return true;
             }
             case OBJ_CLOSURE:
                 return call(AS_CLOSURE(callee), argCount);
@@ -382,8 +386,8 @@ static InterpretResult run() {
             case OP_CONSTANT: {
                 // 常量指令，再读取后面常量值
                 Value constant = READ_CONSTANT();
-                printValue(constant);
-                printf("\n");
+                // printValue(constant);
+                // printf("\n");
                 // 值入栈
                 push(constant);
                 break;

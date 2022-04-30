@@ -62,7 +62,7 @@ void markObject(Obj* object) {
     printValue(OBJ_VAL(object));
     printf("\n");
 #endif
-
+    object->isMarked = true;
     // 动态扩容grayStack数组
     if (vm.grayCapacity < vm.grayCount + 1) {
         vm.grayCapacity = GROW_CAPACITY(vm.grayCapacity);
@@ -75,7 +75,7 @@ void markObject(Obj* object) {
     // 放入遍历中的对象数组
     vm.grayStack[vm.grayCount++] = object;
 
-    object->isMarked = true;
+    
 }
 
 void markValue(Value value) {

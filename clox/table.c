@@ -32,7 +32,7 @@ void freeTable(Table* table) {
  */
 static Entry* findEntry(Entry* entries, int capacity, ObjString* key) {
     // 计算数组中的索引
-    uint32_t index = key->hash % capacity;
+    uint32_t index = key->hash & (capacity - 1);
     // 墓碑节点
     Entry* tombstone = NULL;
     for (;;) {
@@ -52,7 +52,7 @@ static Entry* findEntry(Entry* entries, int capacity, ObjString* key) {
         }
         // 如果上面没找到合适的，继续向数组下一个位置遍历。%
         // capacity是为了遍历到末尾之后从头开始
-        index = (index + 1) % capacity;
+        index = (index + 1) & (capacity - 1);
     }
 }
 
@@ -152,7 +152,7 @@ ObjString* tableFindString(Table* table,
     if (table->count == 0)
         return NULL;
     // 计算索引位置
-    uint32_t index = hash % table->capacity;
+    uint32_t index = hash & (table->capacity - 1);
     for (;;) {
         Entry* entry = &table->entries[index];
         if (entry->key == NULL) {
@@ -166,7 +166,7 @@ ObjString* tableFindString(Table* table,
             return entry->key;
         }
 
-        index = (index + 1) % table->capacity;
+        index = (index + 1) & (table->capacity - 1);
     }
 }
 
