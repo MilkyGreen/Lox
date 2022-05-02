@@ -48,7 +48,7 @@ public class Lox {
     }
 
     /**
-     * 以命令行方式执行
+     * 以命令行方式交互运行
      * @throws IOException
      */
     private static void runPrompt() throws IOException {
@@ -71,12 +71,15 @@ public class Lox {
      * @param source
      */
     private static void run(String source) {
+        // 将源码字符串识别成token列表
         Scanner scanner = new Scanner(source);
-        List<Token> tokens = scanner.scanTokens(); // 扫描成token
+        List<Token> tokens = scanner.scanTokens();
 
+        // 将token列表解析成statement列表。所有的代码都是由一个个statement组成的
         Parser parser = new Parser(tokens);
         List<Stmt> statements = parser.parse();
 
+        // 如果存在编译错误直接返回
         if (hadError){
             return;
         }
@@ -88,7 +91,7 @@ public class Lox {
             return;
         }
 
-        // 执行表达式
+        // 解释执行
         interpreter.interpret(statements);
     }
 

@@ -7,7 +7,7 @@ import java.util.Map;
 
 /**
  * 解释器，负责对lox语言的执行
- * 实现了Visitor，以Visitor模式来为不同的表达式类型提供计算能力。
+ * 实现了Visitor，以Visitor模式来为不同的表达式类型提供执行能力。
  */
 public class Interpreter implements Expr.Visitor<Object>,
                                     Stmt.Visitor<Void> {
@@ -228,14 +228,14 @@ public class Interpreter implements Expr.Visitor<Object>,
         // 在super的下一层可以找到 this 子类实例。
         // 因为super表达式一定处于一个方法的调用过程中，而每个方法的在调用之前都是绑定了自己的this的。
         // 且super所在的上下文位于this上下文上一层的位置。具体可见类声明方法。
-        LoxInstance object = (LoxInstance)environment.getAt(distance - 1, "this");
+        LoxInstance instance = (LoxInstance)environment.getAt(distance - 1, "this");
         // 找到父类的方法
         LoxFunction method = superclass.findMethod(expr.method.lexeme);
         if (method == null) {
             throw new RuntimeError(expr.method, "Undefined property '" + expr.method.lexeme + "'.");
         }
-        // 父类的方法绑定this为当前的实例
-        return method.bind(object);
+        // 父类的方法绑定this为当前的实例。返回的是一个绑定了子类实例的父类方法对象
+        return method.bind(instance);
     }
 
     /**
@@ -360,16 +360,13 @@ public class Interpreter implements Expr.Visitor<Object>,
     }
 
     /**
-     * 执行变量
+     * 变量
      * @param expr
      * @return
      */
     @Override
     public Object visitVariableExpr(Expr.Variable expr) {
-
         return lookUpVariable(expr.name, expr);
-
-//        return this.environment.get(expr.name); // 将变量的值从上下文中取出
     }
 
     /**
@@ -390,14 +387,13 @@ public class Interpreter implements Expr.Visitor<Object>,
     }
 
     /**
-     * 执行变量重置
+     * 执行变量赋值
      * @param expr
      * @return
      */
     @Override
     public Object visitAssignExpr(Expr.Assign expr) {
         Object value = evaluate(expr.value); // 先执行右边的表达式
-//        environment.assign(expr.name, value); // 把新值放到当前环境中
 
         Integer distance = locals.get(expr);
         if (distance != null) {
@@ -467,7 +463,7 @@ public class Interpreter implements Expr.Visitor<Object>,
     public Void visitClassStmt(Stmt.Class stmt) {
         Object superclass = null;
         if (stmt.superclass != null) {
-            // 父类必须是一个class
+            // 父类必须是一个class. lox有严格的顺序要求，父类声明必须在子类前面，所以这里父类是可以获取到的。
             superclass = evaluate(stmt.superclass);
             if (!(superclass instanceof LoxClass)) {
                 throw new RuntimeError(stmt.superclass.name,"Superclass must be a class.");
@@ -564,11 +560,13 @@ public class Interpreter implements Expr.Visitor<Object>,
         if (stmt.value != null){
             value = evaluate(stmt.value);
         }
+        // return是通过抛一个特殊的异常的实现的
         throw new Return(value);
     }
 
     @Override
     public Void visitBreakStmt(Stmt.Break stmt) {
+        // 抛一个break异常来打断循环
         throw new Break();
     }
 

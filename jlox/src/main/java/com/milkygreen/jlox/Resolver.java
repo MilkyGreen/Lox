@@ -6,7 +6,8 @@ import java.util.Map;
 import java.util.Stack;
 
 /**
- * 静态分析器。在parser之后，运行之前，对AST进行一个静态的分析。目前实现了对变量的分析，即使用到一个变量的时候，确定
+ * 静态分析器。
+ * 在parser之后，运行之前，对AST进行一个静态的分析。目前实现了对变量的分析，即使用到一个变量的时候，确定
  * 它是在哪里定义的。
  *
  * 主要做的事情是：标记变量或函数的定义，在使用的时候，从内向外遍历当前scope链，确定在第几层能找到该变量的定义，interpreter
@@ -37,6 +38,7 @@ public class Resolver implements Expr.Visitor<Void>,Stmt.Visitor<Void>{
         SUBCLASS
     }
 
+    // 当前是否在loop中
     private LoopType currentLoop = LoopType.NONE;
 
     private enum LoopType {
@@ -79,9 +81,12 @@ public class Resolver implements Expr.Visitor<Void>,Stmt.Visitor<Void>{
 
     @Override
     public Void visitSuperExpr(Expr.Super expr) {
+        // super关键字的调用
         if (currentClass == ClassType.NONE) {
+            // 必须出现在类里面
             Lox.error(expr.keyword,"Can't use 'super' outside of a class.");
         } else if (currentClass != ClassType.SUBCLASS) {
+            // 必须在子类里使用
             Lox.error(expr.keyword,"Can't use 'super' in a class with no superclass.");
         }
 
@@ -127,7 +132,8 @@ public class Resolver implements Expr.Visitor<Void>,Stmt.Visitor<Void>{
 
     @Override
     public Void visitVariableExpr(Expr.Variable expr) {
-        // 如果已经声明同名变量但是还没初始化，说明当前处于该变量的初始化代码中，一个变量不能在初始化代码中引用自己
+        // 变量的使用
+        // 如果已经声明同名变量但是还没初始化，说明当前处于该变量的初始化代码中，一个变量不能在初始化代码中引用自己。比如var a = a
         if (!scopes.isEmpty() && scopes.peek().get(expr.name.lexeme) == Boolean.FALSE) {
             Lox.error(expr.name, "Can't read local variable in its own initializer.");
         }
@@ -145,7 +151,7 @@ public class Resolver implements Expr.Visitor<Void>,Stmt.Visitor<Void>{
         // 依次从近到远遍历stack，找到变量为止
         for (int i = scopes.size() - 1; i >= 0; i--) {
             if (scopes.get(i).containsKey(name.lexeme)) {
-                // 交给interpreter记录一下层数
+                // 找到了，交给interpreter记录一下层数。这样后面运行的时候可以直接去指定位置查询变量
                 interpreter.resolve(expr, scopes.size() - 1 - i);
                 return;
             }
@@ -186,12 +192,14 @@ public class Resolver implements Expr.Visitor<Void>,Stmt.Visitor<Void>{
         }
 
         if (stmt.superclass != null) {
+            // 如果有父类，表明当前处在子类里
             currentClass = ClassType.SUBCLASS;
             resolve(stmt.superclass);
         }
 
         // 如果有父类，增加super关键字
         if (stmt.superclass != null) {
+            // 新增一个scope，专门存放super变量
             beginScope();
             scopes.peek().put("super", true);
         }
@@ -213,6 +221,7 @@ public class Resolver implements Expr.Visitor<Void>,Stmt.Visitor<Void>{
         endScope();
         // 父类增加了一层scope，最后关掉
         if (stmt.superclass != null){
+            // 结束super变量
             endScope();
         }
         currentClass = enclosingClass;

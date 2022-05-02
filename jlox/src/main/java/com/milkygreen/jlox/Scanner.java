@@ -62,6 +62,7 @@ public class Scanner {
             scanToken();
         }
 
+        // 结束token标识
         tokens.add(new Token(EOF, "", null, line));
         return tokens;
     }
@@ -159,6 +160,7 @@ public class Scanner {
         }
     }
 
+    // 处理identifier，包括关键字，和脚本中定义的变量名、类名、函数名等
     private void identifier() {
         while (isAlphaNumeric(peek())){
             advance();

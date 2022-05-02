@@ -31,6 +31,7 @@ public class Parser {
     List<Stmt> parse() {
         List<Stmt> statements = new ArrayList<>();
         while (!isAtEnd()) {
+            // 一次解析一个statement
             statements.add(declaration());
         }
 
@@ -46,17 +47,21 @@ public class Parser {
     private Stmt declaration() {
         try {
             if (match(CLASS)){
+                // 类声明
                 return classDeclaration();
             }
             if (match(FUN)) {
+                // 函数声明
                 return function("function");
             }
-            if (match(VAR)){    // var 开头说明定义了一个变量
+            if (match(VAR)){
+                // 变量声明
                 return varDeclaration();
             }
+            // 其他声明
             return statement();
         } catch (ParseError error) {
-            // 如果编译报错，需要记录一下错误然后继续编译，尽量一次性抛出更多的编译错误
+            // 如果编译报错，需要跳过当前语句，记录一下错误然后继续编译，尽量一次性抛出更多的编译错误
             synchronize();
             return null;
         }
@@ -122,9 +127,11 @@ public class Parser {
      */
     private Stmt statement() {
         if (match(FOR)) {
+            // for循环
             return forStatement();
         }
         if (match(IF)) {
+            // if表达式
             return ifStatement();
         }
         if (match(PRINT)){
@@ -137,13 +144,14 @@ public class Parser {
             return breakStatement();
         }
         if (match(WHILE)) {
+            // while循环
             return whileStatement();
         }
         if (match(LEFT_BRACE)) {
             return new Stmt.Block(block()); // '{' 开头代表找到了一个代码块
         }
 
-        return expressionStatement();   // 普通表达式类型的声明
+        return expressionStatement();   // 普通表达式
     }
 
     /**
@@ -155,6 +163,7 @@ public class Parser {
         Token keyword = previous();
         Expr value = null;
         if (!check(SEMICOLON)) {
+            // return 后面可以跟一个表达式值，也可以直接跟分号，表达式返回空
             value = expression();
         }
 
@@ -180,9 +189,9 @@ public class Parser {
         if (match(SEMICOLON)) {
             initializer = null; // 没有初始化
         } else if (match(VAR)) {
-            initializer = varDeclaration(); // 初始化变量
+            initializer = varDeclaration(); // 定义了一个初始化变量
         } else {
-            initializer = expressionStatement(); // 执行一个表达式
+            initializer = expressionStatement(); // 没有定义新的，执行一个表达式
         }
 
         Expr condition = null; // 循环条件
@@ -199,7 +208,7 @@ public class Parser {
 
         Stmt body = statement(); // for循环的代码
 
-        // 递增每次都在循环体之后执行，如果存在，把它放在循环体后面组成一个代码块，每次执行
+        // 递增每次都在循环体之后执行，因此把循环体和递增放到一个block里面，每次都会一次执行。
         if (increment != null) {
             body = new Stmt.Block(
                     Arrays.asList(
@@ -214,11 +223,11 @@ public class Parser {
         // 构造while循环
         body = new Stmt.While(condition, body);
 
-        // 如果有初始化表达式，放在while之前，组成一个代码块，这样会在while之前执行，新增的变量对循环体里可见
+        // 如果有初始化表达式，会放在while之前组成一个新的代码块，这样会在while之前执行一次，而且新增的变量对循环体里可见
         if (initializer != null) {
             body = new Stmt.Block(Arrays.asList(initializer, body));
         }
-
+        // 最后for循环就变成了一个包含了while的代码块
         return body;
     }
 
@@ -227,9 +236,11 @@ public class Parser {
      * @return
      */
     private Stmt whileStatement() {
+        // 后面是一对括号，里面是条件表达式
         consume(LEFT_PAREN, "Expect '(' after 'while'.");
         Expr condition = expression();      // while括号里面的条件表达式
         consume(RIGHT_PAREN, "Expect ')' after condition.");
+        // 循环代码体
         Stmt body = statement();
 
         return new Stmt.While(condition, body);
@@ -241,13 +252,15 @@ public class Parser {
      * @return
      */
     private Stmt ifStatement() {
+        // 先跟一对括号，里面是条件表达式
         consume(LEFT_PAREN, "Expect '(' after 'if'.");
         Expr condition = expression();
         consume(RIGHT_PAREN, "Expect ')' after if condition.");
-
+        // if如果为true，执行thenBranch
         Stmt thenBranch = statement();
         Stmt elseBranch = null;
         if (match(ELSE)) {
+            // 如果有else，解析else语句
             elseBranch = statement();
         }
 
@@ -259,6 +272,7 @@ public class Parser {
      * @return
      */
     private Stmt printStatement() {
+        // 要返回的值，是一个表达式
         Expr value = expression();
         consume(SEMICOLON, "Expect ';' after value.");
         return new Stmt.Print(value);
@@ -313,32 +327,39 @@ public class Parser {
      * @return
      */
     private Expr expression() {
+        // 从优先级最低的赋值开始解析
         return assignment();
     }
 
     /**
-     * 变量重新赋值操作
+     * 赋值操作
      * @return
      */
     private Expr assignment() {
+        // 先用更高级的OR解析左半边
         Expr expr = or();
 
         if (match(EQUAL)) {
+            // 如果存在 = 说明是一个赋值表达式，继续解析右边
+
             Token equals = previous();
 
-            Expr value = assignment(); // 要赋的值，也是个表达式
+            // 等号的右边，也是个表达式，用同优先级的assignment解析出来
+            Expr value = assignment();
 
             if (expr instanceof Expr.Variable) {
+                // 左边如果是一个变量，是变量赋值
                 Token name = ((Expr.Variable)expr).name;
                 return new Expr.Assign(name, value);
             } else if (expr instanceof Expr.Get) {
-                // set方法其实是左边先出现get，后面跟 = value
+                // 左边如果是一个字段的get，则是对象字段的赋值，（set方法其实是左边先出现get，后面跟 = value）
                 Expr.Get get = (Expr.Get)expr;
                 return new Expr.Set(get.object, get.name, value);
             }
 
             error(equals, "Invalid assignment target.");
         }else if(match(PLUS_PLUS)){
+            // 右边跟的 ++, 是一个 +1操作
             Token line = previous();
             if (expr instanceof Expr.Variable) {
                 Token name = ((Expr.Variable)expr).name;
@@ -347,6 +368,7 @@ public class Parser {
                 error(line, "Invalid ++ target.");
             }
         }else if(match(MINUS_MINUS)){
+            // 左边跟的 -- ，是一个-1操作
             Token line = previous();
             if (expr instanceof Expr.Variable) {
                 Token name = ((Expr.Variable)expr).name;
@@ -364,10 +386,13 @@ public class Parser {
      * @return
      */
     private Expr or() {
+        // 先解析左边的 and
         Expr expr = and();
 
         while (match(OR)) {
+            // 如果中间是 and，继续解析后面
             Token operator = previous();
+            // 右边也用and方法解析
             Expr right = and();
             expr = new Expr.Logical(expr, operator, right);
         }
@@ -380,9 +405,11 @@ public class Parser {
      * @return
      */
     private Expr and() {
+        // 先解析左边的 equality，即 == 表达式
         Expr expr = equality();
 
         while (match(AND)) {
+            // 如果中间有and，继续解析右边的 equality
             Token operator = previous();
             Expr right = equality();
             expr = new Expr.Logical(expr, operator, right);
@@ -397,11 +424,12 @@ public class Parser {
      * @return
      */
     private Expr equality() {
-        Expr expr = comparison(); // 先让更高级的处理
+        Expr expr = comparison(); // 先让更高级大小比较表达式
 
-        while (match(BANG_EQUAL, EQUAL_EQUAL)) { // 如果有 = 或者 != ，则需要自己处理
+        while (match(BANG_EQUAL, EQUAL_EQUAL)) {
+            // 如果中间有 = 或者 != ，继续解析右边的 comparison 表达式
             Token operator = previous(); // 操作符
-            Expr right = comparison(); // 操作符后面的表达式，还是交给更高级方法处理
+            Expr right = comparison();
             expr = new Expr.Binary(expr, operator, right); // 定义一个Binary类型的表达式，用自己的操作符操作左右两个子表达式
         }
 
@@ -413,11 +441,14 @@ public class Parser {
      * @return
      */
     private Expr comparison() {
+        // 先解析左边的加减表达式
         Expr expr = term();
 
         while (match(GREATER, GREATER_EQUAL, LESS, LESS_EQUAL)) {
+            // 如果有比较符号，继续解析右边的表达式
             Token operator = previous();
             Expr right = term();
+            // 组成一个二元表达式
             expr = new Expr.Binary(expr, operator, right);
         }
 
@@ -429,11 +460,14 @@ public class Parser {
      * @return
      */
     private Expr term() {
+        // 先解析左边的 乘除 表达式（优先级更高）
         Expr expr = factor();
 
         while (match(MINUS, PLUS)) {
+            // 如果中间有 + 或 - ，继续解析后面
             Token operator = previous();
             Expr right = factor();
+            // 组成一个二元表达式
             expr = new Expr.Binary(expr, operator, right);
         }
 
@@ -445,14 +479,15 @@ public class Parser {
      * @return
      */
     private Expr factor() {
+        // 解析左边一元表达式
         Expr expr = unary();
 
         while (match(SLASH, STAR)) {
+            // 如果中间有 * 或者 / ，继续解析右边的一元表达式
             Token operator = previous();
             Expr right = unary();
             expr = new Expr.Binary(expr, operator, right);
         }
-
         return expr;
     }
 
@@ -461,12 +496,14 @@ public class Parser {
      * @return
      */
     private Expr unary() {
+        // 一元表达式由 - 或者 ! 开头
         if (match(BANG, MINUS)) {
             Token operator = previous();
+            // 后面还是可能跟一个一元表达式，比如 --1，就是 1 ，这个是允许的
             Expr right = unary();
             return new Expr.Unary(operator, right);
         }
-
+        // 如果不是 - ！ 开头，说明不是一元表达式，则按高一级函数调用的表达式去解析
         return call();
     }
 
@@ -475,11 +512,12 @@ public class Parser {
      * @return
      */
     private Expr call() {
-        // 函数名（如果后面有括号的话）
+        // 解析可能的函数名称
         Expr expr = primary();
 
         while (true) {
             if (match(LEFT_PAREN)) {
+                // 如果后面紧跟一个左括号，则是一个函数调用表达式
                 expr = finishCall(expr);
             } else if (match(DOT)) {
                 // 出现点，代表是一个get表达式，如 person.name，或者 Person().son.name,前面可以出现多个方法调用和get
@@ -519,7 +557,7 @@ public class Parser {
     }
 
     /**
-     * primary类型表达式指不可再解析的字面token，字符串、数字、true、false、nil、括号 等
+     * primary类型表达式指不可再拆分解析的字面token，字符串、数字、true、false、nil、括号 等
      * @return
      */
     private Expr primary() {
@@ -538,13 +576,17 @@ public class Parser {
         }
 
         if (match(SUPER)) {
+            // super关键字，它后面只能出现方法调用
             Token keyword = previous();
             consume(DOT, "Expect '.' after 'super'.");
+            // 解析方法名
             Token method = consume(IDENTIFIER, "Expect superclass method name.");
+            // 返回一个父类方法调用表达式
             return new Expr.Super(keyword, method);
         }
 
         if (match(THIS)){
+            // this关键字表达式
             return new Expr.This(previous());
         }
 
@@ -553,6 +595,8 @@ public class Parser {
         }
 
         if (match(LEFT_PAREN)) {
+            // 括号，代表一个处在括号内的表达式，把里面的表达式解析一下，去掉两个括号
+            // 括号本身代表了一个最高优先级，因此里面的表达式会被优先解析
             Expr expr = expression();
             consume(RIGHT_PAREN, "Expect ')' after expression.");
             return new Expr.Grouping(expr);
