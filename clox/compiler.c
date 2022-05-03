@@ -73,7 +73,7 @@ typedef enum {
 
 // 正在执行的Compiler
 typedef struct Compiler {
-    // Compiler栈，指向上一层函数的Compiler。每解析到一个函数会新建一个专用compiler，记录上一层的，杰希望之后会还原。
+    // Compiler栈，指向上一层函数的Compiler。每解析到一个函数会新建一个专用compiler，记录上一层的，结束之后会还原。
     struct Compiler* enclosing;
 
     ObjFunction* function;  // 函数对象
@@ -194,12 +194,14 @@ static void emitBytes(uint8_t byte1, uint8_t byte2) {
 
 // 设置循环指令和循环跳回的位置
 static void emitLoop(int loopStart) {
+    // 先写入循环指令
     emitByte(OP_LOOP);
 
     int offset = currentChunk()->count - loopStart + 2;
     if (offset > UINT16_MAX)
         error("Loop body too large.");
 
+    // 连续写入两个八位数字，共同组成一个要循环跳转的位置
     emitByte((offset >> 8) & 0xff);
     emitByte(offset & 0xff);
 }
@@ -229,7 +231,7 @@ static void emitReturn() {
     emitByte(OP_RETURN);
 }
 
-// 值放入常量池，返回索引
+// 值放入当前chunk的常量池，返回索引
 static uint8_t makeConstant(Value value) {
     int constant = addConstant(currentChunk(), value);
     if (constant > UINT8_MAX) {
@@ -240,7 +242,7 @@ static uint8_t makeConstant(Value value) {
     return (uint8_t)constant;
 }
 
-// 向chunk写入一个常量值
+// 向chunk写入一个常量值的索引
 static void emitConstant(Value value) {
     emitBytes(OP_CONSTANT, makeConstant(value));
 }
@@ -248,7 +250,7 @@ static void emitConstant(Value value) {
 // 设置之前的跳转占位符的步数
 // 此时要被跳过的代码已经被编译成了指令，跳过的步数即这些指令的数量
 static void patchJump(int offset) {
-    // 当前的指令数量减去被跳过代码编译前的指令数量，就是要被跳过的指令数。当然还要被两个占位符去掉，因为offset占位符的索引开始位置。
+    // 当前的指令数量减去被跳过代码编译前的指令数量，就是要被跳过的指令数。当然还要被两个占位符去掉，因为offset是占位符的索引开始位置。
     // jump就是要被跳过的指令数
     int jump = currentChunk()->count - offset - 2;
 
@@ -417,8 +419,7 @@ static void addLocal(Token name) {
     }
     Local* local = &current->locals[current->localCount++];
     local->name = name;
-    // 深度先设置为 -1，表明还未定义，只是先声明了一下。防止 var a = a + 1;
-    // 这种语法
+    // 深度先设置为 -1，表明还未定义，只是先声明了一下。防止 var a = a + 1 这种语法
     local->depth = -1;
     local->isCaptured = false;
 }
@@ -461,8 +462,10 @@ static uint8_t parseVariable(const char* errorMessage) {
 
 // 设置本地变量的深度
 static void markInitialized() {
+    // 全局变量不处理
     if (current->scopeDepth == 0)
         return;
+    // 设置一下本地变量的depth，初始化之前都是-1
     current->locals[current->localCount - 1].depth = current->scopeDepth;
 }
 
@@ -475,6 +478,7 @@ static void defineVariable(uint8_t global) {
         markInitialized();
         return;
     }
+    // 定义为全局变量
     emitBytes(OP_DEFINE_GLOBAL, global);
 }
 
@@ -504,7 +508,7 @@ static void and_(bool canAssign) {
     emitByte(OP_POP);
     // 继续编译后面的表达式
     parsePrecedence(PREC_AND);
-    // 设置跳过的步数
+    // 设置跳过的步数：从endJump到这里中间的部分都跳过。
     patchJump(endJump);
 }
 
@@ -581,7 +585,7 @@ static void dot(bool canAssign) {
         emitBytes(OP_INVOKE, name);
         emitByte(argCount);
     } else {
-        // 否者是字段获取
+        // 后面什么都不带，是字段获取
         emitBytes(OP_GET_PROPERTY, name);
     }
 }
@@ -620,7 +624,7 @@ static void number(bool canAssign) {
 
 // or逻辑，任意一个true就可以跳过后面的条件
 // 所以一个有条件跳转之后加一个无条件跳转。
-// 先判断是否是false，有的话跳过无条件跳转指令，继续往后执行。
+// 先判断是否是false，是的话要跳过无条件跳转指令，继续往后执行别的条件。
 // 如果有true则会执行到无条件跳转，跳过后面所有的条件。
 static void or_(bool canAssign) {
     int elseJump = emitJump(OP_JUMP_IF_FALSE);
@@ -650,7 +654,7 @@ static void string(bool canAssign) {
  * @param canAssign 当前的表达式中是否支持变量赋值（大部分不支持）
  */
 static void namedVariable(Token name, bool canAssign) {
-    // 先获取变量名称的在常量池中的索引，作为指令。（为了保持执行栈的大小，不直接把变量名放入栈中）
+    // 先获取变量名称的在常量池中的索引，作为指令。（为了保持执行栈的小内存，不直接把变量名放入栈中）
     uint8_t getOp, setOp;
     // 查看是否是本地变量
     int arg = resolveLocal(current, &name);
@@ -711,8 +715,7 @@ static void super_(bool canAssign) {
     // 解析方法名
     uint8_t name = identifierConstant(&parser.previous);
 
-    // 获取this关键字对应的实例，获取super关键字对应的父类对象
-    // 因为super.method() ，是用子类的实例调用父类的方法体。因此需要下面两个对象
+    // 获取this关键字对应的实例，因为super.method()，是用子类的实例调用父类的方法体，this代表了之类实例
     namedVariable(syntheticToken("this"), false);
 
     if (match(TOKEN_LEFT_PAREN)) {
@@ -823,8 +826,8 @@ static void parsePrecedence(Precedence precedence) {
     bool canAssign = precedence <= PREC_ASSIGNMENT;
     prefixRule(canAssign);
 
-    // 后面一个token如果优先级更高，则和前面处理过的那些token共同组成一个中缀表达式。while是为了后面有多个高优先级中缀表达式，比如：1
-    // + 2 * 3 / 6  解析成指令：1 2 3 * 6 / + 执行步骤1：栈：3 2 1   指令： * 6
+    // 后面一个token如果优先级更高，则和前面处理过的那些token共同组成一个中缀表达式。while是为了后面有多个高优先级中缀表达式，比如：
+    // 1 + 2 * 3 / 6  解析成指令：1 2 3 * 6 / + ，执行步骤1：栈：3 2 1   指令： * 6
     // 、 + 执行步骤2：栈：6 1     指令： 6 / + 执行步骤3：栈：6 6 1   指令: / +
     // 执行步骤4：栈：1 1     指令: +
     // 执行步骤5：栈：2       指令:
@@ -910,7 +913,7 @@ static void method() {
 
     if (parser.previous.length == 4 &&
         memcmp(parser.previous.start, "init", 4) == 0) {
-        // 是一个初始化方法
+        // 方法名=init ，是一个初始化方法
         type = TYPE_INITIALIZER;
     }
 
@@ -992,7 +995,7 @@ static void funDeclaration() {
 // 变量定义
 static void varDeclaration() {
     // 获取变量名的常量池索引
-    uint8_t global = parseVariable("Expect variable name.");
+    uint8_t name = parseVariable("Expect variable name.");
 
     // 后面有等于号，变量有初始化值，否则是空。先把变量值放入栈中
     if (match(TOKEN_EQUAL)) {
@@ -1002,7 +1005,7 @@ static void varDeclaration() {
     }
     consume(TOKEN_SEMICOLON, "Expect ';' after variable declaration.");
     // 定义变量指令到chunk中
-    defineVariable(global);
+    defineVariable(name);
 }
 
 // 处理表达式声明。（就是表达式）
