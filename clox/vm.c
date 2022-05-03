@@ -405,7 +405,7 @@ static InterpretResult run() {
                 pop();
                 break;
             case OP_GET_LOCAL: {
-                // 本地变量取值，下一个指令就是本地变量值在栈中的索引
+                // 本地变量取值，下一个指令就是本地变量值在chunk中的索引
                 uint8_t slot = READ_BYTE();
                 // 将值push进栈
                 push(frame->slots[slot]);
@@ -453,8 +453,7 @@ static InterpretResult run() {
                     runtimeError("Undefined variable '%s'.", name->chars);
                     return INTERPRET_RUNTIME_ERROR;
                 }
-                // 赋值不对栈产生任何影响。栈里的值会在expressionStatement()
-                // 加的POP指令被pop出来
+                // 赋值不对栈产生任何影响。栈里的值会在expressionStatement() 里加的POP指令被pop出来
                 break;
             }
             case OP_SET_UPVALUE: {
