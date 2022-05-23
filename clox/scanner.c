@@ -6,19 +6,19 @@
 
 /**
  * @brief Scanner负责将源码字符串识别为各种token
- * 
+ *
  */
 typedef struct {
-    const char* start; // 当前token的开始指针
-    const char* current; // 当前扫描到的位置
-    int line; // 行数
+    const char* start;    // 当前token的开始指针
+    const char* current;  // 当前扫描到的位置
+    int line;             // 行数
 } Scanner;
 
 Scanner scanner;
 
 /**
  * @brief 初始化扫描器
- * 
+ *
  * @param source 源码字符串指针
  */
 void initScanner(const char* source) {
@@ -61,10 +61,10 @@ static char peekNext() {
 
 /**
  * @brief 下一个字符是否期望字符
- * 
- * @param expected 
- * @return true 
- * @return false 
+ *
+ * @param expected
+ * @return true
+ * @return false
  */
 static bool match(char expected) {
     if (isAtEnd())
@@ -78,9 +78,9 @@ static bool match(char expected) {
 
 /**
  * @brief 根据type创建token
- * 
- * @param type 
- * @return Token 
+ *
+ * @param type
+ * @return Token
  */
 static Token makeToken(TokenType type) {
     Token token;
@@ -103,7 +103,7 @@ static Token errorToken(const char* message) {
 /**
  * @brief 代码中的跳过空白、注释、换行等字符。
  * 每次获取下一个token之前调用
- * 
+ *
  */
 static void skipWhitespace() {
     for (;;) {
@@ -115,7 +115,7 @@ static void skipWhitespace() {
                 advance();
                 break;
             case '\n':
-                scanner.line++; // 行数加一
+                scanner.line++;  // 行数加一
                 advance();
                 break;
             case '/':
@@ -136,18 +136,17 @@ static void skipWhitespace() {
 
 /**
  * @brief 判断是否是关键字
- * 
+ *
  * @param start 字符串开始
  * @param length 字符串长度
  * @param rest  期望的字符串
  * @param type  期望类型
- * @return TokenType 
+ * @return TokenType
  */
 static TokenType checkKeyword(int start,
                               int length,
                               const char* rest,
                               TokenType type) {
-    
     // 当前字符串长度和内容等于期望字符串，判断为关键字。否则就是token
     if (scanner.current - scanner.start == start + length &&
         memcmp(scanner.start + start, rest, length) == 0) {
@@ -158,16 +157,27 @@ static TokenType checkKeyword(int start,
 }
 
 /**
- * @brief 判断当前token是不是关键字。关键字是有限的，因此利用类似字典树的方法判断
- * 
- * @return TokenType 
+ * @brief
+ * 判断当前token是不是关键字。关键字是有限的，因此利用类似字典树的方法判断
+ *
+ * @return TokenType
  */
 static TokenType identifierType() {
     switch (scanner.start[0]) {
         case 'a':
             return checkKeyword(1, 2, "nd", TOKEN_AND);
+        case 'b':
+            return checkKeyword(1, 4, "reak", TOKEN_BREAK);
         case 'c':
-            return checkKeyword(1, 4, "lass", TOKEN_CLASS);
+            if (scanner.current - scanner.start > 1) {
+                switch (scanner.start[1]) {
+                    case 'l':
+                        return checkKeyword(2, 3, "ass", TOKEN_CLASS);
+                    case 'o':
+                        return checkKeyword(2, 6, "ntinue", TOKEN_CONTINUE);
+                }
+            }
+            break;
         case 'e':
             return checkKeyword(1, 3, "lse", TOKEN_ELSE);
         case 'f':
@@ -215,8 +225,8 @@ static TokenType identifierType() {
 
 /**
  * @brief 获取 identifier类型token
- * 
- * @return Token 
+ *
+ * @return Token
  */
 static Token identifier() {
     while (isAlpha(peek()) || isDigit(peek()))

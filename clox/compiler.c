@@ -88,7 +88,7 @@ typedef struct Compiler {
 // 当前正在编译的类
 typedef struct ClassCompiler {
     struct ClassCompiler* enclosing;  // 上一层的类
-    bool hasSuperclass;  // 当前是否处在一个继承类父类的类里
+    bool hasSuperclass;  // 当前是否处在一个子类里
 } ClassCompiler;
 
 Parser parser;
@@ -97,6 +97,13 @@ Parser parser;
 Compiler* current = NULL;
 
 ClassCompiler* currentClass = NULL;
+
+// 当前是否在一个循环内
+bool inLoop = false;
+// 循环中的break在chunk中的位置。可能有多个
+int breaks[UINT8_COUNT];
+// break数量
+int breakCount = 0;
 
 // 获取当前的指令数组
 static Chunk* currentChunk() {
@@ -211,10 +218,10 @@ static int emitJump(uint8_t instruction) {
     // 跳转指令
     emitByte(instruction);
     // 后面用两个byte代表要跳转的步数，最多 0xffff
-    // 这里的步数只是先占位，具体多少要等到后面的代码编译完才知道。
+    // 这里只是先占位，具体多少要等到后面的代码编译完才知道。
     emitByte(0xff);
     emitByte(0xff);
-    // 返回跳转步数在数组中的索引，第一个占位数字的位置，后面会直接在这里赋值
+    // 返回跳转步数在数组中的索引，第一个占位数字的位置，后面会把真实要跳转的数字写到这个位置
     return currentChunk()->count - 2;
 }
 
@@ -250,7 +257,7 @@ static void emitConstant(Value value) {
 // 设置之前的跳转占位符的步数
 // 此时要被跳过的代码已经被编译成了指令，跳过的步数即这些指令的数量
 static void patchJump(int offset) {
-    // 当前的指令数量减去被跳过代码编译前的指令数量，就是要被跳过的指令数。当然还要被两个占位符去掉，因为offset是占位符的索引开始位置。
+    // 当前的指令数量减去被跳过代码编译前的指令数量，就是要被跳过的指令数。当然还要把两个占位符去掉，因为offset是占位符的索引开始位置。
     // jump就是要被跳过的指令数
     int jump = currentChunk()->count - offset - 2;
 
@@ -793,6 +800,8 @@ ParseRule rules[] = {
     [TOKEN_ELSE] = {NULL, NULL, PREC_NONE},
     [TOKEN_FALSE] = {literal, NULL, PREC_NONE},
     [TOKEN_FOR] = {NULL, NULL, PREC_NONE},
+    [TOKEN_BREAK] = {NULL, NULL, PREC_NONE},
+    [TOKEN_CONTINUE] = {NULL, NULL, PREC_NONE},
     [TOKEN_FUN] = {NULL, NULL, PREC_NONE},
     [TOKEN_IF] = {NULL, NULL, PREC_NONE},
     [TOKEN_NIL] = {literal, NULL, PREC_NONE},
@@ -1077,15 +1086,26 @@ static void forStatement() {
         // 统计变量递增的指令数量
         patchJump(bodyJump);
     }
+    inLoop = true;
     // 循环体
     statement();
     // 如果有变量递增，此时的loopStart是变量递增的位置，如果没有就是条件判断
     emitLoop(loopStart);
-
+    
     if (exitJump != -1) {
         patchJump(exitJump);
         emitByte(OP_POP);  // Condition.
     }
+
+    // 设置所有的break跳转到这里
+    for(int i = 0;i < breakCount;i++){
+        int exitJump = breaks[i];
+        patchJump(exitJump);
+        emitByte(OP_POP); 
+    }
+    // break数量归零
+    breakCount = 0;
+    inLoop = false;
 
     endScope();
 }
@@ -1168,6 +1188,15 @@ static void whileStatement() {
     emitByte(OP_POP);
 }
 
+// break Statement
+static void breakStatement() {
+    if (!inLoop) {
+        error("Can't break from non-loop block.");
+    }
+    consume(TOKEN_SEMICOLON, "Expect ';' after value.");
+    breaks[breakCount++] = emitJump(OP_JUMP);
+}
+
 // 从异常模式中恢复编译
 static void synchronize() {
     parser.panicMode = false;
@@ -1225,6 +1254,8 @@ static void statement() {
     } else if (match(TOKEN_FOR)) {
         // for循环
         forStatement();
+    }else if(match(TOKEN_BREAK)){
+        breakStatement();
     } else if (match(TOKEN_RETURN)) {
         returnStatement();
     } else if (match(TOKEN_LEFT_BRACE)) {
