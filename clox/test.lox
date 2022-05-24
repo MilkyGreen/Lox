@@ -1,4 +1,18 @@
 
+var j = 10;
+while(j < 20){
+
+  print j;
+  if(j == 15){
+    break;
+  }
+  if(j == 14){
+    break;
+  }
+  
+  j = j + 1;
+}
+
 class Doughnut {
 
   cook() {
@@ -22,6 +36,7 @@ var d = Doughnut();
 d.cook();
 
 Cruller().finish("aa");
+
 
 
 for(var i = 0;i < 10;i=i+1){

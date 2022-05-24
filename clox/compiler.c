@@ -1094,15 +1094,16 @@ static void forStatement() {
     
     if (exitJump != -1) {
         patchJump(exitJump);
-        emitByte(OP_POP);  // Condition.
+        emitByte(OP_POP); // Condition.
     }
 
     // 设置所有的break跳转到这里
     for(int i = 0;i < breakCount;i++){
-        int exitJump = breaks[i];
-        patchJump(exitJump);
-        emitByte(OP_POP); 
+        // int exitJump = breaks[i];
+        patchJump(breaks[i]);
+        // emitByte(OP_POP); 
     }
+
     // break数量归零
     breakCount = 0;
     inLoop = false;
@@ -1178,14 +1179,27 @@ static void whileStatement() {
     int exitJump = emitJump(OP_JUMP_IF_FALSE);
     // 这一轮的条件（true） pop出去
     emitByte(OP_POP);
+
+    inLoop = true;
     // 循环体
     statement();
+    inLoop = false;
     // 跳回开始的指令位置
     emitLoop(loopStart);
+
     // 设置循环结束的指令位置
     patchJump(exitJump);
-    // 把false pop出去
+    // 把条件值false pop出去
     emitByte(OP_POP);
+
+    // 设置所有的break都跳转到这里
+    for(int i = 0;i < breakCount;i++){
+        patchJump(breaks[i]);
+        // emitByte(OP_POP);  这里条件是true，已经在上面pop过了，不能再pop
+    }
+
+    // break数量归零
+    breakCount = 0;
 }
 
 // break Statement
