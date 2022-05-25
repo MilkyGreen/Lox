@@ -104,6 +104,8 @@ bool inLoop = false;
 int breaks[UINT8_COUNT];
 // break数量
 int breakCount = 0;
+// 当前循环的开始指令位置
+int currentLoopStart = 0;
 
 // 获取当前的指令数组
 static Chunk* currentChunk() {
@@ -1087,6 +1089,7 @@ static void forStatement() {
         patchJump(bodyJump);
     }
     inLoop = true;
+    currentLoopStart = loopStart;
     // 循环体
     statement();
     // 如果有变量递增，此时的loopStart是变量递增的位置，如果没有就是条件判断
@@ -1181,6 +1184,7 @@ static void whileStatement() {
     emitByte(OP_POP);
 
     inLoop = true;
+    currentLoopStart = loopStart;
     // 循环体
     statement();
     inLoop = false;
@@ -1208,7 +1212,18 @@ static void breakStatement() {
         error("Can't break from non-loop block.");
     }
     consume(TOKEN_SEMICOLON, "Expect ';' after value.");
+    // 先记录所有的break位置，设置跳转指令。后续会统一设置跳转步数
     breaks[breakCount++] = emitJump(OP_JUMP);
+}
+
+// continue Statement
+static void continueStatement() {
+    if (!inLoop) {
+        error("Can't continue from non-loop block.");
+    }
+    consume(TOKEN_SEMICOLON, "Expect ';' after value.");
+    // 遇到continue之后，向前跳转到循环开始的指令位置
+    emitLoop(currentLoopStart);
 }
 
 // 从异常模式中恢复编译
@@ -1270,6 +1285,8 @@ static void statement() {
         forStatement();
     }else if(match(TOKEN_BREAK)){
         breakStatement();
+    }else if(match(TOKEN_CONTINUE)){
+        continueStatement();
     } else if (match(TOKEN_RETURN)) {
         returnStatement();
     } else if (match(TOKEN_LEFT_BRACE)) {
